@@ -1,8 +1,10 @@
 const DB_NAME = 'physio-doc-local';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
+const BACKUP_VERSION = 1;
 const PATIENT_STORE = 'patients';
 const PRESCRIPTION_STORE = 'prescriptions';
 const DOC_ENTRY_STORE = 'docEntries';
+const DOC_IMAGE_STORE = 'docEntryImages';
 const META_STORE = 'meta';
 const LAST_OPENED_KEY = 'lastOpenedPatientIds';
 const MAX_RECENT = 5;
@@ -31,6 +33,11 @@ function openDb() {
         docEntryStore.createIndex('entryDate', 'entryDate', { unique: false });
       }
 
+      if (!db.objectStoreNames.contains(DOC_IMAGE_STORE)) {
+        const imageStore = db.createObjectStore(DOC_IMAGE_STORE, { keyPath: 'id' });
+        imageStore.createIndex('docEntryId', 'docEntryId', { unique: false });
+      }
+
       if (!db.objectStoreNames.contains(META_STORE)) {
         db.createObjectStore(META_STORE, { keyPath: 'key' });
       }
@@ -55,13 +62,15 @@ function waitForTransaction(tx, fallbackMessage) {
   });
 }
 
+async function getAllFromStore(storeName) {
+  const db = await openDb();
+  const tx = db.transaction(storeName, 'readonly');
+  return getRequestResult(tx.objectStore(storeName).getAll());
+}
+
 export async function getAllPatients() {
   try {
-    const db = await openDb();
-    const tx = db.transaction(PATIENT_STORE, 'readonly');
-    const store = tx.objectStore(PATIENT_STORE);
-    const patients = await getRequestResult(store.getAll());
-
+    const patients = await getAllFromStore(PATIENT_STORE);
     return patients.sort((a, b) => {
       const byLastName = a.lastName.localeCompare(b.lastName, 'de');
       if (byLastName !== 0) return byLastName;
@@ -99,51 +108,6 @@ export async function savePatient(patientInput) {
     return patient;
   } catch (error) {
     throw new Error(`Patient konnte nicht gespeichert werden: ${error.message}`);
-  }
-}
-
-export async function deletePatient(id) {
-  try {
-    const db = await openDb();
-    const tx = db.transaction([PATIENT_STORE, PRESCRIPTION_STORE, DOC_ENTRY_STORE], 'readwrite');
-
-    tx.objectStore(PATIENT_STORE).delete(id);
-
-    const prescriptionStore = tx.objectStore(PRESCRIPTION_STORE);
-    const docEntryStore = tx.objectStore(DOC_ENTRY_STORE);
-    const prescriptionIds = [];
-
-    const prescriptionCursorRequest = prescriptionStore.index('patientId').openCursor(IDBKeyRange.only(id));
-    prescriptionCursorRequest.onsuccess = () => {
-      const cursor = prescriptionCursorRequest.result;
-      if (!cursor) return;
-      prescriptionIds.push(cursor.primaryKey);
-      prescriptionStore.delete(cursor.primaryKey);
-      cursor.continue();
-    };
-
-    await waitForTransaction(tx, 'Patient konnte nicht gelöscht werden.');
-
-    if (prescriptionIds.length > 0) {
-      const cleanupDb = await openDb();
-      const cleanupTx = cleanupDb.transaction(DOC_ENTRY_STORE, 'readwrite');
-      const cleanupStore = cleanupTx.objectStore(DOC_ENTRY_STORE);
-      const index = cleanupStore.index('prescriptionId');
-
-      for (const prescriptionId of prescriptionIds) {
-        const request = index.openCursor(IDBKeyRange.only(prescriptionId));
-        request.onsuccess = () => {
-          const cursor = request.result;
-          if (!cursor) return;
-          cleanupStore.delete(cursor.primaryKey);
-          cursor.continue();
-        };
-      }
-
-      await waitForTransaction(cleanupTx, 'Doku-Einträge konnten nicht bereinigt werden.');
-    }
-  } catch (error) {
-    throw new Error(`Patient konnte nicht gelöscht werden: ${error.message}`);
   }
 }
 
@@ -244,5 +208,135 @@ export async function saveDocEntry(docEntryInput) {
     return entry;
   } catch (error) {
     throw new Error(`Doku-Eintrag konnte nicht gespeichert werden: ${error.message}`);
+  }
+}
+
+export async function getDocEntryImages(docEntryId) {
+  try {
+    const db = await openDb();
+    const tx = db.transaction(DOC_IMAGE_STORE, 'readonly');
+    const index = tx.objectStore(DOC_IMAGE_STORE).index('docEntryId');
+    const images = await getRequestResult(index.getAll(docEntryId));
+    return images.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  } catch (error) {
+    throw new Error(`Bilder konnten nicht geladen werden: ${error.message}`);
+  }
+}
+
+export async function saveDocEntryImages(docEntryId, imagesInput) {
+  try {
+    const db = await openDb();
+    const tx = db.transaction(DOC_IMAGE_STORE, 'readwrite');
+    const store = tx.objectStore(DOC_IMAGE_STORE);
+    const index = store.index('docEntryId');
+
+    const existing = await getRequestResult(index.getAll(docEntryId));
+    existing.forEach(image => store.delete(image.id));
+
+    const now = new Date().toISOString();
+    imagesInput.forEach(image => {
+      store.put({
+        ...image,
+        id: image.id || crypto.randomUUID(),
+        docEntryId,
+        createdAt: image.createdAt || now,
+      });
+    });
+
+    await waitForTransaction(tx, 'Bilder konnten nicht gespeichert werden.');
+  } catch (error) {
+    throw new Error(`Bilder konnten nicht gespeichert werden: ${error.message}`);
+  }
+}
+
+export async function getDocEntryImageCountMap(docEntryIds) {
+  if (!docEntryIds.length) return {};
+
+  try {
+    const pairs = await Promise.all(
+      docEntryIds.map(async docEntryId => {
+        const images = await getDocEntryImages(docEntryId);
+        return [docEntryId, images.length];
+      }),
+    );
+
+    return Object.fromEntries(pairs);
+  } catch (error) {
+    throw new Error(`Bildanzahl konnte nicht geladen werden: ${error.message}`);
+  }
+}
+
+export async function exportAllData() {
+  try {
+    const [patients, prescriptions, documentationEntries, images] = await Promise.all([
+      getAllFromStore(PATIENT_STORE),
+      getAllFromStore(PRESCRIPTION_STORE),
+      getAllFromStore(DOC_ENTRY_STORE),
+      getAllFromStore(DOC_IMAGE_STORE),
+    ]);
+
+    const db = await openDb();
+    const tx = db.transaction(META_STORE, 'readonly');
+    const recentlyOpenedEntry = await getRequestResult(tx.objectStore(META_STORE).get(LAST_OPENED_KEY));
+    const recentlyOpened = Array.isArray(recentlyOpenedEntry?.value) ? recentlyOpenedEntry.value : [];
+
+    return {
+      version: BACKUP_VERSION,
+      exportedAt: new Date().toISOString(),
+      patients,
+      prescriptions,
+      documentationEntries,
+      images,
+      recentlyOpened,
+    };
+  } catch (error) {
+    throw new Error(`Backup konnte nicht exportiert werden: ${error.message}`);
+  }
+}
+
+function validateBackupData(backup) {
+  const required = ['version', 'exportedAt', 'patients', 'prescriptions', 'documentationEntries', 'images', 'recentlyOpened'];
+  const missing = required.filter(field => !(field in backup));
+  if (missing.length > 0) {
+    throw new Error(`Backup ist unvollständig. Fehlende Felder: ${missing.join(', ')}`);
+  }
+  if (!Array.isArray(backup.patients) || !Array.isArray(backup.prescriptions) || !Array.isArray(backup.documentationEntries) || !Array.isArray(backup.images) || !Array.isArray(backup.recentlyOpened)) {
+    throw new Error('Backup ist ungültig: Listenfelder haben ein falsches Format.');
+  }
+}
+
+export async function clearAllData() {
+  try {
+    const db = await openDb();
+    const tx = db.transaction([PATIENT_STORE, PRESCRIPTION_STORE, DOC_ENTRY_STORE, DOC_IMAGE_STORE, META_STORE], 'readwrite');
+    tx.objectStore(PATIENT_STORE).clear();
+    tx.objectStore(PRESCRIPTION_STORE).clear();
+    tx.objectStore(DOC_ENTRY_STORE).clear();
+    tx.objectStore(DOC_IMAGE_STORE).clear();
+    tx.objectStore(META_STORE).clear();
+    await waitForTransaction(tx, 'Lokale Daten konnten nicht gelöscht werden.');
+  } catch (error) {
+    throw new Error(`Lokale Daten konnten nicht gelöscht werden: ${error.message}`);
+  }
+}
+
+export async function importAllDataReplace(backupData) {
+  validateBackupData(backupData);
+
+  try {
+    await clearAllData();
+
+    const db = await openDb();
+    const tx = db.transaction([PATIENT_STORE, PRESCRIPTION_STORE, DOC_ENTRY_STORE, DOC_IMAGE_STORE, META_STORE], 'readwrite');
+
+    backupData.patients.forEach(item => tx.objectStore(PATIENT_STORE).put(item));
+    backupData.prescriptions.forEach(item => tx.objectStore(PRESCRIPTION_STORE).put(item));
+    backupData.documentationEntries.forEach(item => tx.objectStore(DOC_ENTRY_STORE).put(item));
+    backupData.images.forEach(item => tx.objectStore(DOC_IMAGE_STORE).put(item));
+    tx.objectStore(META_STORE).put({ key: LAST_OPENED_KEY, value: backupData.recentlyOpened });
+
+    await waitForTransaction(tx, 'Backup konnte nicht importiert werden.');
+  } catch (error) {
+    throw new Error(`Backup-Import fehlgeschlagen: ${error.message}`);
   }
 }
