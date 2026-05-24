@@ -9,60 +9,604 @@
   --green-soft: #f4fbf4;
   --doc-soft: #fff8f1;
   --backup-soft: #f4f8fc;
+  --blue: #3a78c2;
+  --green: #5f9b71;
 }
 
-.app-shell { min-height: 100vh; background: var(--bg); color: var(--text); }
-.app-grid { display: block; }
-.app-sidebar { border-bottom: 1px solid var(--border); background: var(--sidebar); padding: 20px; }
-.sidebar-logo-wrap { display:flex; justify-content:center; margin-bottom: 20px; }
-.sidebar-logo { max-width: 180px; width: 100%; height: auto; object-fit: contain; }
-.sidebar-nav { display: grid; gap: 10px; }
-.sidebar-item { display:flex; gap:12px; align-items:center; border:0; background:transparent; border-radius:16px; padding:12px 14px; color:#5f6874; text-align:left; }
-.sidebar-item.is-active { background:#e8eef8; color:#2f5f9f; }
-.app-main { padding: 16px; }
-.app-topbar { margin-bottom: 20px; border:1px solid var(--border); background: rgba(255,255,255,.82); border-radius:24px; padding:14px; display:flex; gap:12px; align-items:center; justify-content:space-between; }
-.search-wrap{position:relative; width:100%}
-.search-input{width:100%; border:1px solid #ddd3c8; border-radius:16px; background:white; padding:10px 12px 10px 38px}
-.search-icon{position:absolute; left:12px; top:11px; color:#9098a3}
-.top-icons{display:none; gap:12px; color:#6c7684}
-.content-space{display:grid; gap:16px}
-.list-layout{display:grid; gap:16px}
-.surface-card{border:1px solid var(--border); background:rgba(255,255,255,.92); border-radius:24px; padding:20px; box-shadow:0 10px 30px rgba(85,65,45,.09)}
-.ui-card{width:100%; text-align:left; border-radius:20px; padding:14px; border:1px solid var(--border)}
-.ui-card-patient{background:var(--blue-soft); border-color:#d9e5f6}
-.ui-card-prescription{background:var(--green-soft); border-color:#d8ead8}
-.ui-card-doc{background:var(--doc-soft); border-color:#eddccf}
-.ui-card-title{margin:0; font-weight:650; font-size:1.04rem}
-.ui-card-title-sm{margin:0; font-weight:650}
-.ui-card-sub{margin:6px 0 0; color:#636b75; font-size:.9rem}
-.ui-card-meta{margin:8px 0 0; color:#9a8f84; font-size:.78rem}
-.ui-chip-label{margin:0; font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:#6a8d6a}
-.section-title{margin:0 0 12px; font-size:1.65rem; font-weight:700; text-align:left}
-.section-subtitle{margin:0 0 10px; font-size:1.2rem; font-weight:650; text-align:left}
-.muted{color:var(--muted)}
-.msg{border-radius:16px;padding:12px;font-size:.9rem}.msg-error{border:1px solid #fecaca;background:#fef2f2;color:#b91c1c}.msg-success{border:1px solid #bbf7d0;background:#f0fdf4;color:#166534}
-.row-gap,.row-between,.row-end{display:flex;gap:10px}.row-between{justify-content:space-between;align-items:center}.row-end{justify-content:flex-end}
-.stack{display:grid;gap:10px}.stack-sm{display:grid;gap:8px}.stack-lg{display:grid;gap:16px}
-.backup-card{margin-top:20px;border:1px solid #d6dde8;background:var(--backup-soft);border-radius:20px;padding:16px}
-.backup-card h3{margin:0}.backup-card p{margin:6px 0 12px;color:#6f7681}
-.btn{border:none;border-radius:16px;padding:11px 16px;display:inline-flex;align-items:center;gap:8px;cursor:pointer}
-.btn-primary{background:#3a78c2;color:#fff}.btn-secondary{background:#506b88;color:#fff}.btn-green{background:#5f9b71;color:#fff}.btn-ghost,.btn-ghost-inline{border:1px solid #d8cdc2;background:#fff}.btn-danger{width:100%;justify-content:center;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c}.icon-btn{padding-inline:14px}.full{width:100%;justify-content:center}
-.field{width:100%;border:1px solid #ddd3c8;background:#fff;border-radius:16px;padding:11px 12px}.textfield{min-height:230px;resize:vertical}
-.prescription-layout{display:grid;gap:18px}.card-prescription{background:var(--green-soft);border-color:#d8ead8}.card-doc-preview,.card-doc-edit{background:var(--doc-soft);border-color:#eddccf}
-.chip-sub{margin:0;color:#6b8f6b;font-size:.85rem}.strong{font-weight:650}.mt{margin-top:12px}.pre{white-space:pre-wrap;color:#59616e}
-.toolbar-box{border:1px solid #e8d9cb;background:#fdf3e8;border-radius:16px;padding:14px}.toolbar-title{margin:0 0 10px;font-size:.9rem;color:#7a6f64;font-weight:600}.toolbar-row{display:flex;flex-wrap:wrap;gap:8px}
-.pill-btn{border-radius:999px;border:1px solid #d8c7b6;background:#fff;padding:8px 12px;font-size:.84rem}
-.image-grid{display:grid;gap:10px;grid-template-columns:1fr}.upload-card{min-height:140px;display:flex;align-items:center;justify-content:center;text-align:center;border:1px dashed #cfc4b9;background:#fbf7f2;border-radius:16px;color:#6e7480;cursor:pointer}.upload-plus{display:block;margin:0 auto 8px}
-.image-card{border:1px solid #ddd3c8;background:#fff;border-radius:16px;padding:8px}.image-preview{width:100%;height:112px;object-fit:cover;border-radius:12px}.image-name{margin:6px 0;font-size:.75rem;color:#7a7f87;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hidden{display:none}.grid-2{display:grid;gap:10px}
-
-@media (min-width: 768px){
-  .app-grid{display:grid;grid-template-columns:280px 1fr;min-height:100vh}
-  .app-sidebar{position:sticky;top:0;height:100vh;border-bottom:0;border-right:1px solid var(--border)}
-  .app-main{padding:24px 28px}
-  .top-icons{display:flex}
-  .list-layout{grid-template-columns:1.35fr 1fr}
-  .prescription-layout{grid-template-columns:360px 1fr}
-  .image-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+* {
+  box-sizing: border-box;
 }
-@media (min-width:1024px){.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+}
+
+.app-grid {
+  display: block;
+}
+
+.app-sidebar {
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar);
+  padding: 18px;
+}
+
+.sidebar-logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+  background: rgba(255, 255, 255, 0.68);
+  border-radius: 20px;
+  padding: 12px;
+}
+
+.sidebar-logo {
+  max-width: 90px;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.sidebar-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebar-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  border-radius: 16px;
+  padding: 11px 14px;
+  color: #5f6874;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-item.is-active {
+  background: #e8eef8;
+  color: #2f5f9f;
+}
+
+.app-main {
+  padding: 16px;
+}
+
+.app-topbar {
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 8px 22px rgba(85, 65, 45, 0.06);
+}
+
+.breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  color: #556170;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.breadcrumb-part:first-child {
+  font-weight: 650;
+  color: #2f3540;
+}
+
+.breadcrumb-separator {
+  margin-right: 6px;
+  color: #9a8f84;
+}
+
+.top-icons {
+  display: none;
+  gap: 12px;
+  color: #6c7684;
+  flex-shrink: 0;
+}
+
+.content-space {
+  display: grid;
+  gap: 16px;
+}
+
+.list-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.surface-card {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 10px;
+  padding: 15px;
+  box-shadow: 0 10px 30px rgba(85, 65, 45, 0.09);
+}
+
+.side-panel {
+  align-self: start;
+}
+
+.ui-card {
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ui-card:hover,
+.prescription-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(85, 65, 45, 0.08);
+}
+
+.ui-card-patient {
+  background: var(--blue-soft);
+  border-color: #d9e5f6;
+}
+
+.ui-card-prescription {
+  background: var(--green-soft);
+  border-color: #d8ead8;
+}
+
+.ui-card-doc {
+  background: var(--doc-soft);
+  border-color: #eddccf;
+}
+
+.ui-card-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+.ui-card-title-sm {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.ui-card-sub {
+  margin: 4px 0 0;
+  color: #636b75;
+  font-size: 0.64rem;
+}
+
+.inline-date{
+  font-weight:400;
+  color:#7a8088;
+  font-size:.75rem;
+}
+
+.ui-card-meta {
+  margin: 7px 0 0;
+  color: #9a8f84;
+  font-size: 0.66rem;
+}
+
+.section-title {
+  margin: 0 0 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.section-subtitle {
+  margin: 0 0 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.msg {
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 0.9rem;
+}
+
+.msg-error {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.msg-success {
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.row-gap,
+.row-between,
+.row-end {
+  display: flex;
+  gap: 10px;
+}
+
+.row-between {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.row-end {
+  justify-content: flex-end;
+}
+
+.stack {
+  display: grid;
+  gap: 9px;
+}
+
+.stack-sm {
+  display: grid;
+  gap: 8px;
+}
+
+.stack-lg {
+  display: grid;
+  gap: 16px;
+}
+
+.patient-actions {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.search-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.search-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.search-input {
+  width: 100%;
+  border: 1px solid #ddd3c8;
+  border-radius: 10px;
+  background: white;
+  padding: 10px 12px 10px 38px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 11px;
+  color: #9098a3;
+}
+
+.backup-card {
+  margin-top: 18px;
+  border: 1px solid #d6dde8;
+  background: var(--backup-soft);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.backup-card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.backup-card p {
+  margin: 6px 0 10px;
+  color: #6f7681;
+  font-size: 0.80rem;
+}
+
+.btn {
+  border: none;
+  border-radius: 10px;
+  padding: 7px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  min-height: 42px;
+}
+
+.btn-primary {
+  background: var(--blue);
+  color: #fff;
+}
+
+.btn-secondary {
+  background: #506b88;
+  color: #fff;
+}
+
+.btn-green {
+  background: var(--green);
+  color: #fff;
+}
+
+.btn-search {
+  background: #eef4fb;
+  color: #3a638f;
+  border: 1px solid #d8e3ee;
+  padding-inline: 13px;
+}
+
+.btn-ghost,
+.btn-ghost-inline {
+  border: 1px solid #d8cdc2;
+  background: #fff;
+  color: #3a414d;
+}
+
+.btn-ghost-inline {
+  width: fit-content;
+  min-height: 38px;
+  padding: 8px 13px;
+}
+
+.btn-danger {
+  width: 100%;
+  justify-content: center;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.add-patient-btn {
+  width: fit-content;
+}
+
+.full {
+  width: 100%;
+  justify-content: center;
+}
+
+.field {
+  width: 100%;
+  border: 1px solid #ddd3c8;
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.textfield {
+  min-height: 230px;
+  resize: vertical;
+}
+
+.patient-head-card {
+  padding: 12px 14px;
+}
+
+.prescription-header {
+  margin-bottom: 5px;
+}
+
+.prescription-list {
+  display: grid;
+  gap: 7px;
+}
+
+.prescription-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr;
+  gap: 14px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid #d8ead8;
+  background: var(--green-soft);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.prescription-date {
+  font-weight: 650;
+  font-size: 0.75rem;
+}
+
+.prescription-remedy {
+  color: #576270;
+  font-size: 0.75rem;
+}
+
+.prescription-layout {
+  display: grid;
+  gap: 18px;
+}
+
+.card-prescription {
+  background: var(--green-soft);
+  border-color: #d8ead8;
+}
+
+.card-doc-preview,
+.card-doc-edit {
+  background: var(--doc-soft);
+  border-color: #eddccf;
+}
+
+.chip-sub {
+  margin: 0;
+  color: #6b8f6b;
+  font-size: 0.8rem;
+}
+
+.strong {
+  font-weight: 650;
+}
+
+.mt {
+  margin-top: 12px;
+}
+
+.pre {
+  white-space: pre-wrap;
+  color: #59616e;
+}
+
+.toolbar-box {
+  border: 1px solid #e8d9cb;
+  background: #fdf3e8;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.toolbar-title {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  color: #7a6f64;
+  font-weight: 600;
+}
+
+.toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill-btn {
+  border-radius: 10px;
+  border: 1px solid #d8c7b6;
+  background: #fff;
+  padding: 3px 10px;
+  font-size: 0.73rem;
+  cursor: pointer;
+}
+
+.image-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr;
+}
+
+.upload-card {
+  min-height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border: 1px dashed #cfc4b9;
+  background: #fbf7f2;
+  border-radius: 10px;
+  color: #6e7480;
+  cursor: pointer;
+}
+
+.upload-plus {
+  display: block;
+  margin: 0 auto 8px;
+}
+
+.image-card {
+  border: 1px solid #ddd3c8;
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.image-preview {
+  width: 100%;
+  height: 112px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.image-name {
+  margin: 6px 0;
+  font-size: 0.75rem;
+  color: #7a7f87;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hidden {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .app-grid {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    min-height: 100vh;
+  }
+
+  .app-sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    border-bottom: 0;
+    border-right: 1px solid var(--border);
+  }
+
+  .app-main {
+    padding: 24px 28px;
+  }
+
+  .top-icons {
+    display: flex;
+  }
+
+  .list-layout {
+    grid-template-columns: 1.35fr 1fr;
+  }
+
+  .prescription-layout {
+    grid-template-columns: 340px 1fr;
+  }
+
+  .image-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-shell {
+    font-size: 14px;
+  }
+
+  .app-main {
+    padding: 26px 34px;
+  }
+
+  .surface-card {
+    padding: 8px;
+  }
+}
