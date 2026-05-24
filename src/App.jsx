@@ -894,7 +894,9 @@ export default function App() {
 
                     {docImages.map(image => (
                       <div key={image.id} className="image-card">
-                        <img src={image.dataUrl} alt={image.fileName} className="image-preview" />
+                        <img src={image.dataUrl} alt={image.fileName} className="image-preview"
+  			onClick={() => setFullscreenImage(image.dataUrl)}
+			/>
                         <p className="image-name">{image.fileName}</p>
                         <button type="button" className="btn btn-danger" onClick={() => handleRemoveImage(image.id)}>Bild entfernen</button>
                       </div>

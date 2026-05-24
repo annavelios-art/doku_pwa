@@ -610,3 +610,23 @@ textarea {
     padding: 8px;
   }
 }
+
+.lightbox{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.72);
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  z-index:9999;
+}
+
+.lightbox-image{
+  max-width:92vw;
+  max-height:92vh;
+
+  border-radius:12px;
+  box-shadow:0 10px 40px rgba(0,0,0,.45);
+}
