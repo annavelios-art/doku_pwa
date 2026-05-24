@@ -268,6 +268,7 @@ export default function App() {
   const [docEntries, setDocEntries] = useState([])
   const [docEntryImageCounts, setDocEntryImageCounts] = useState({})
   const [docImages, setDocImages] = useState([])
+  const [fullscreenImage, setFullscreenImage] = useState(null)
   const [query, setQuery] = useState('')
   const [patientForm, setPatientForm] = useState(EMPTY_PATIENT_FORM)
   const [prescriptionForm, setPrescriptionForm] = useState(EMPTY_PRESCRIPTION_FORM)
@@ -916,6 +917,28 @@ export default function App() {
           </main>
         </section>
       </div>
+
+      {fullscreenImage && (
+        <div
+          className="lightbox"
+          onClick={() => setFullscreenImage(null)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={event => {
+            if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
+              setFullscreenImage(null)
+            }
+          }}
+          aria-label="Bild schließen"
+        >
+          <img
+            src={fullscreenImage}
+            alt="Vergrößerte Bildansicht"
+            className="lightbox-image"
+            onClick={event => event.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   )
 }
