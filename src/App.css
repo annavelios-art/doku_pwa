@@ -497,7 +497,7 @@ textarea {
 
 .toolbar-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
 }
 
