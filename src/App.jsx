@@ -515,9 +515,12 @@ export default function App() {
   }
 
   function insertSymbolText(textToInsert) {
-    setDocForm(prev => ({ ...prev, text: `${prev.text}${prev.text ? '\n' : ''}${textToInsert}` }))
-    docTextareaRef.current?.focus()
-  }
+  setDocForm(prev => ({
+    ...prev,
+    text: `${prev.text}${prev.text ? ' ' : ''}${textToInsert}`
+  }))
+  docTextareaRef.current?.focus()
+}
 
   function goPatients() {
     setNav('patients')
