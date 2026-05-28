@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Bell, CircleHelp, CloudUpload, Dumbbell, Edit3, Home, Library,
-  Plus, Save, Search, Settings, UserCircle2,
+  Plus, Printer, Save, Search, Settings, UserCircle2,
 } from 'lucide-react'
 import {
   exportAllData, getAllPatients, getDocEntriesByPrescriptionId, getDocEntryImageCountMap,
@@ -173,6 +173,12 @@ async function readBackupJsonFromZip(file) {
 
 const formatDate = value => (value ? new Date(value).toLocaleDateString('de-DE') : '–')
 const snippet = text => (text || '').split('\n')[0].trim().slice(0, 90) || 'Ohne Text'
+const escapeHtml = value => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;')
 
 const patientLabel = patient => patient ? `${patient.firstName} ${patient.lastName}` : ''
 const prescriptionLabel = prescription => prescription ? `VO ${formatDate(prescription.issueDate)} · ${prescription.remedy}` : ''
@@ -514,7 +520,140 @@ export default function App() {
     setDocImages(prev => prev.filter(image => image.id !== imageId))
   }
 
+  function printPrescriptionDocs() {
+    if (!selectedPrescription) return
+
+    const sortedEntries = [...docEntries].sort((a, b) => {
+      const dateA = a.entryDate || a.createdAt || ''
+      const dateB = b.entryDate || b.createdAt || ''
+      return dateA.localeCompare(dateB)
+    })
+
+    const entriesHtml = sortedEntries.length
+      ? sortedEntries.map(entry => `
+        <section class="entry">
+          <h2>${escapeHtml(formatDate(entry.entryDate))}</h2>
+          <div class="entry-text">${escapeHtml(entry.text).replace(/\n/g, '<br />')}</div>
+        </section>
+      `).join('')
+      : '<p class="muted">Zu dieser Verordnung gibt es noch keine Doku-Einträge.</p>'
+
+    const patientName = selectedPatient ? `${selectedPatient.lastName}, ${selectedPatient.firstName}` : 'Patient/in'
+    const printWindow = window.open('', '_blank', 'noopener,noreferrer')
+
+    if (!printWindow) {
+      setError('Das Druckfenster wurde vom Browser blockiert. Bitte Pop-ups für diese Seite erlauben.')
+      return
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html lang="de">
+        <head>
+          <meta charset="utf-8" />
+          <title>Dokumentation ${escapeHtml(patientName)}</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 18mm;
+            }
+
+            body {
+              font-family: Arial, sans-serif;
+              color: #222;
+              line-height: 1.45;
+              margin: 0;
+            }
+
+            .print-header {
+              border-bottom: 2px solid #d8c7b6;
+              padding-bottom: 12px;
+              margin-bottom: 18px;
+            }
+
+            h1 {
+              font-size: 20px;
+              margin: 0 0 8px;
+            }
+
+            .meta {
+              font-size: 13px;
+              margin: 4px 0;
+            }
+
+            .label {
+              font-weight: 700;
+            }
+
+            .entry {
+              break-inside: avoid;
+              border: 1px solid #e4d8cc;
+              border-radius: 10px;
+              padding: 12px 14px;
+              margin: 0 0 12px;
+            }
+
+            .entry h2 {
+              font-size: 15px;
+              margin: 0 0 8px;
+            }
+
+            .entry-text {
+              white-space: normal;
+              font-size: 14px;
+            }
+
+            .muted {
+              color: #666;
+            }
+
+            .footer {
+              border-top: 1px solid #e4d8cc;
+              color: #666;
+              font-size: 11px;
+              margin-top: 22px;
+              padding-top: 8px;
+            }
+
+            @media print {
+              body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <header class="print-header">
+            <h1>Behandlungsdokumentation</h1>
+            <p class="meta"><span class="label">Patient/in:</span> ${escapeHtml(patientName)}</p>
+            <p class="meta"><span class="label">Geburtsdatum:</span> ${escapeHtml(formatDate(selectedPatient?.birthDate))}</p>
+            <p class="meta"><span class="label">Verordnung:</span> ${escapeHtml(formatDate(selectedPrescription.issueDate))} · ${escapeHtml(selectedPrescription.remedy)}</p>
+          </header>
+
+          <main>
+            ${entriesHtml}
+          </main>
+
+          <footer class="footer">
+            Erstellt am ${escapeHtml(new Date().toLocaleDateString('de-DE'))}
+          </footer>
+
+          <script>
+            window.onload = function () {
+              window.focus()
+              window.print()
+            }
+          </script>
+        </body>
+      </html>
+    `)
+
+    printWindow.document.close()
+  }
+
   function insertSymbolText(textToInsert) {
+
   setDocForm(prev => ({
     ...prev,
     text: `${prev.text}${prev.text ? ' ' : ''}${textToInsert}`
@@ -730,12 +869,26 @@ export default function App() {
                   </button>
 
                   <article className="surface-card card-prescription">
-                    <p><span className="chip-sub">Ausstellungsdatum:</span>
-			{' '}
-                    <span className="strong">{formatDate(selectedPrescription.issueDate)}</span></p>
-                    <p><span className="chip-sub mt">Heilmittel:</span>
-			{' '}
-                   <span className="chip-sub mt"> {selectedPrescription.remedy}</span></p>
+                    <div className="row-between">
+                      <div>
+                        <p><span className="chip-sub">Ausstellungsdatum:</span>
+                          {' '}
+                          <span className="strong">{formatDate(selectedPrescription.issueDate)}</span></p>
+                        <p><span className="chip-sub mt">Heilmittel:</span>
+                          {' '}
+                          <span className="chip-sub mt">{selectedPrescription.remedy}</span></p>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={printPrescriptionDocs}
+                        title="Doku drucken / als PDF speichern"
+                        aria-label="Doku drucken oder als PDF speichern"
+                      >
+                        <Printer size={18} />
+                      </button>
+                    </div>
                   </article>
 
                   <button
