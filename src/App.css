@@ -502,12 +502,17 @@ textarea {
 }
 
 .pill-btn {
-  border-radius: 10px;
+  border-radius: 5px;
   border: 1px solid #d8c7b6;
   background: #fff;
-  padding: 3px 10px;
-  font-size: 0.73rem;
+  padding: 2px 2px;
+  font-size: 0.57rem;
   cursor: pointer;
+  line-height: 1.1;
+display:flex;
+flex-direction:column;
+align-items:center;
+justify-content:center;
 }
 
 .image-grid {
@@ -629,4 +634,81 @@ textarea {
 
   border-radius:12px;
   box-shadow:0 10px 40px rgba(0,0,0,.45);
+}
+
+/* Druckansicht ohne Popup-Fenster */
+
+.print-only {
+  display: none;
+}
+
+@media print {
+  .app-grid,
+  .lightbox {
+    display: none !important;
+  }
+
+  .app-shell {
+    background: #fff !important;
+    padding: 0 !important;
+  }
+
+  .print-only {
+    display: block;
+    color: #222;
+    font-family: Arial, sans-serif;
+    line-height: 1.45;
+    padding: 0;
+  }
+
+  .print-header {
+    border-bottom: 2px solid #d8c7b6;
+    padding-bottom: 12px;
+    margin-bottom: 18px;
+  }
+
+  .print-header h1 {
+    font-size: 20px;
+    margin: 0 0 8px;
+  }
+
+  .print-header p {
+    font-size: 13px;
+    margin: 4px 0;
+  }
+
+  .print-label {
+    font-weight: 700;
+  }
+
+  .print-entry {
+    break-inside: avoid;
+    border: 1px solid #e4d8cc;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 0 0 12px;
+  }
+
+  .print-entry h2 {
+    font-size: 15px;
+    margin: 0 0 8px;
+  }
+
+  .print-entry p {
+    white-space: pre-wrap;
+    font-size: 14px;
+    margin: 0;
+  }
+
+  .print-muted {
+    color: #666;
+  }
+
+  .print-footer {
+    border-top: 1px solid #e4d8cc;
+    color: #666;
+    font-size: 11px;
+    margin-top: 22px;
+    padding-top: 8px;
+  }
 }
