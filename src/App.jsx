@@ -1,70 +1,43 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, Bell, CircleHelp, CloudUpload, Dumbbell, Edit3, Home, Library,
+  ArrowLeft, Bell, CircleHelp, CloudUpload, Dumbbell, Edit3, FileText, Home, Library,
   Plus, Printer, Save, Search, Settings, UserCircle2,
 } from 'lucide-react'
 import {
   exportAllData, getAllPatients, getDocEntriesByPrescriptionId, getDocEntryImageCountMap,
-  getDocEntryImages, getPatientById, getPrescriptionsByPatientId, getRecentlyOpenedPatients,
-  importAllDataReplace, markPatientAsRecentlyOpened, saveDocEntry, saveDocEntryImages,
-  savePatient, savePrescription,
+  getDocEntryImages, getLibraryItems, getPatientById, getPatientDocumentsByPatientId,
+  getPrescriptionsByPatientId, getRecentlyOpenedPatients, importAllDataReplace,
+  markPatientAsRecentlyOpened, saveDocEntry, saveDocEntryImages, saveLibraryItem,
+  savePatient, savePatientDocument, savePrescription,
 } from './lib/patientsDb'
 import './App.css'
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
 const EMPTY_PRESCRIPTION_FORM = { id: '', issueDate: '', remedy: '', createdAt: '' }
 const EMPTY_DOC_FORM = { id: '', entryDate: '', text: '', createdAt: '' }
+const EMPTY_LIBRARY_FORM = { id: '', category: 'nachbehandlung', title: '', note: '', file: null, createdAt: '' }
+const EMPTY_PATIENT_DOCUMENT_FORM = { id: '', documentDate: '', title: '', note: '', file: null, createdAt: '' }
+
+const LIBRARY_SECTIONS = [
+  { key: 'nachbehandlung', title: 'Nachbehandlung', description: 'Schemas, Protokolle und Verlaufsempfehlungen.' },
+  { key: 'uebungsblaetter', title: 'Übungsblätter', description: 'PDFs oder Bilder für Patientinnen und Patienten.' },
+  { key: 'archiv', title: 'Archiv', description: 'Bleibt erstmal leer und darf später wachsen.' },
+]
 
 const TOOLBAR_INSERTS = [
-	 {
-    label: '⚡ Schmerzen',
-    insert: '⚡'
-  },
-  {
-    label: '🔥 Reizung/Entzündung ',
-    insert: '🔥'
-  },
- {
-    label: '👍 besser ',
-    insert: '👍'
-  },
- {
-    label: '👎 schlechter ',
-    insert: '👎'
-  },
- {
-    label: '↔️ unverändert',
-    insert: '↔️'
-  },
-{
-    label: '🏠 Hausaufgabe',
-    insert: '🏠'
-  },
-{
-    label: '🎯 nächster Fokus',
-    insert: '🎯'
-  },
-{
-    label: '💪 Kraft',
-    insert: '💪'
-  },
-{
-    label: '🌀 Schwindel',
-    insert: '🌀'
-  },  
-{
-    label: '😴 Erschöpfung',
-    insert: '😴'
-  }, 
- {
-    label: '🚶 Mobilität / Gangbild',
-    insert: '🚶'
-  }, 
-   {
-    label: '🌬️ Atmung',
-    insert: '🌬️'
-  }
-  ]
+  { label: '⚡ Schmerzen', insert: '⚡' },
+  { label: '🔥 Reizung/Entzündung', insert: '🔥' },
+  { label: '👍 besser', insert: '👍' },
+  { label: '👎 schlechter', insert: '👎' },
+  { label: '↔️ unverändert', insert: '↔️' },
+  { label: '🏠 Hausaufgabe', insert: '🏠' },
+  { label: '🎯 nächster Fokus', insert: '🎯' },
+  { label: '💪 Kraft', insert: '💪' },
+  { label: '🌀 Schwindel', insert: '🌀' },
+  { label: '😴 Erschöpfung', insert: '😴' },
+  { label: '🚶 Mobilität / Gangbild', insert: '🚶' },
+  { label: '🌬️ Atmung', insert: '🌬️' },
+]
 
 function createZipWithBackupJson(jsonText) {
   const fileName = 'backup.json'
@@ -172,31 +145,19 @@ async function readBackupJsonFromZip(file) {
 }
 
 const formatDate = value => (value ? new Date(value).toLocaleDateString('de-DE') : '–')
+const todayIso = () => new Date().toISOString().slice(0, 10)
 const snippet = text => (text || '').split('\n')[0].trim().slice(0, 90) || 'Ohne Text'
-
 const patientLabel = patient => patient ? `${patient.firstName} ${patient.lastName}` : ''
 const prescriptionLabel = prescription => prescription ? `VO ${formatDate(prescription.issueDate)} · ${prescription.remedy}` : ''
-
-const Placeholder = ({ title, onBack }) => (
-  <section className="surface-card stack-lg">
-    <h2 className="section-title">{title}</h2>
-    <p className="muted">Dieser Bereich wird später erweitert.</p>
-    <div>
-      <button className="btn btn-ghost" onClick={onBack}>Zurück zur Patientenliste</button>
-    </div>
-  </section>
-)
+const libraryTitle = category => LIBRARY_SECTIONS.find(item => item.key === category)?.title || 'Bibliothek'
 
 function PatientCard({ patient, onOpen }) {
   return (
     <button type="button" onClick={() => onOpen(patient.id)} className="ui-card ui-card-patient ui-list-card">
       <p className="ui-card-title">
-  {patient.lastName}, {patient.firstName}
-  <span className="inline-date">
-    {' · '}
-    {formatDate(patient.birthDate)}
-  </span>
-</p>
+        {patient.lastName}, {patient.firstName}
+        <span className="inline-date">{' · '}{formatDate(patient.birthDate)}</span>
+      </p>
     </button>
   )
 }
@@ -216,6 +177,19 @@ function DocEntryCard({ entry, imageCount, onOpen }) {
       <p className="ui-card-title-sm">{formatDate(entry.entryDate)}</p>
       <p className="ui-card-sub">{snippet(entry.text)}</p>
       {imageCount > 0 && <p className="ui-card-meta">📷 {imageCount} Bilder</p>}
+    </button>
+  )
+}
+
+function StoredFileCard({ title, date, note, file, onOpen, tone = 'document' }) {
+  return (
+    <button type="button" onClick={() => onOpen(file)} className={`ui-card ui-card-file ui-card-file-${tone} ui-list-card`}>
+      <p className="ui-card-title-sm">{title}</p>
+      <p className="ui-card-sub">
+        {formatDate(date)}
+        {file?.fileName ? ` · ${file.fileName}` : ''}
+      </p>
+      {note && <p className="ui-card-meta">{note}</p>}
     </button>
   )
 }
@@ -257,6 +231,38 @@ function resizeImageToDataUrl(file) {
   })
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onload = () => resolve({
+      id: crypto.randomUUID(),
+      fileName: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      dataUrl: String(reader.result),
+      createdAt: new Date().toISOString(),
+    })
+
+    reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function prepareStoredFile(file) {
+  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png']
+  const isAllowedByName = /\.(pdf|jpe?g|png)$/i.test(file.name)
+
+  if (!allowedTypes.includes(file.type) && !isAllowedByName) {
+    throw new Error('Bitte nur PDF, JPG oder PNG hochladen.')
+  }
+
+  if (file.type.startsWith('image/') || /\.(jpe?g|png)$/i.test(file.name)) {
+    return resizeImageToDataUrl(file)
+  }
+
+  return readFileAsDataUrl(file)
+}
+
 export default function App() {
   const [view, setView] = useState('list')
   const [nav, setNav] = useState('patients')
@@ -268,11 +274,16 @@ export default function App() {
   const [docEntries, setDocEntries] = useState([])
   const [docEntryImageCounts, setDocEntryImageCounts] = useState({})
   const [docImages, setDocImages] = useState([])
+  const [patientDocuments, setPatientDocuments] = useState([])
+  const [libraryCategory, setLibraryCategory] = useState('nachbehandlung')
+  const [libraryItems, setLibraryItems] = useState([])
   const [fullscreenImage, setFullscreenImage] = useState(null)
   const [query, setQuery] = useState('')
   const [patientForm, setPatientForm] = useState(EMPTY_PATIENT_FORM)
   const [prescriptionForm, setPrescriptionForm] = useState(EMPTY_PRESCRIPTION_FORM)
   const [docForm, setDocForm] = useState(EMPTY_DOC_FORM)
+  const [libraryForm, setLibraryForm] = useState(EMPTY_LIBRARY_FORM)
+  const [patientDocumentForm, setPatientDocumentForm] = useState(EMPTY_PATIENT_DOCUMENT_FORM)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -289,9 +300,14 @@ export default function App() {
 
   const breadcrumbItems = useMemo(() => {
     if (nav === 'exercises') return ['Übungen']
-    if (nav === 'library') return ['Bibliothek']
     if (nav === 'settings') return ['Einstellungen']
+    if (nav === 'library') {
+      if (view === 'libraryList') return ['Bibliothek', libraryTitle(libraryCategory)]
+      if (view === 'libraryEdit') return ['Bibliothek', libraryTitle(libraryCategory), 'Datei hinzufügen']
+      return ['Bibliothek']
+    }
     if (view === 'patientEdit') return [selectedPatient ? patientLabel(selectedPatient) : 'Patientenliste', selectedPatient ? 'Patient bearbeiten' : 'Patient hinzufügen']
+    if (view === 'patientDocumentEdit') return [patientLabel(selectedPatient), 'Dokumente/Befunde', 'Dokument hinzufügen']
     if (view === 'prescriptionEdit') return [patientLabel(selectedPatient), selectedPrescription ? prescriptionLabel(selectedPrescription) : 'Neue Verordnung']
     if (view === 'docEdit') return [
       patientLabel(selectedPatient),
@@ -301,7 +317,7 @@ export default function App() {
     if (view === 'prescriptionDetail') return [patientLabel(selectedPatient), prescriptionLabel(selectedPrescription)].filter(Boolean)
     if (view === 'patientDetail') return [patientLabel(selectedPatient)].filter(Boolean)
     return ['Patientenliste']
-  }, [nav, view, selectedPatient, selectedPrescription, docForm.entryDate])
+  }, [nav, view, selectedPatient, selectedPrescription, docForm.entryDate, libraryCategory])
 
   useEffect(() => { loadListData() }, [])
 
@@ -338,9 +354,14 @@ export default function App() {
       const patient = await getPatientById(patientId)
       if (!patient) throw new Error('Patient wurde nicht gefunden.')
 
-      const patientPrescriptions = await getPrescriptionsByPatientId(patientId)
+      const [patientPrescriptions, documents] = await Promise.all([
+        getPrescriptionsByPatientId(patientId),
+        getPatientDocumentsByPatientId(patientId),
+      ])
+
       setSelectedPatient(patient)
       setPrescriptions(patientPrescriptions)
+      setPatientDocuments(documents)
       setSelectedPrescription(null)
       setDocEntries([])
       setDocEntryImageCounts({})
@@ -351,6 +372,11 @@ export default function App() {
     } catch (e) {
       setError(e.message)
     }
+  }
+
+  async function reloadPatientDocuments(patientId = selectedPatient?.id) {
+    if (!patientId) return
+    setPatientDocuments(await getPatientDocumentsByPatientId(patientId))
   }
 
   async function loadPrescriptionDetail(prescription) {
@@ -364,6 +390,19 @@ export default function App() {
       setDocEntries(entries)
       setDocEntryImageCounts(counts)
       setView('prescriptionDetail')
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  async function loadLibraryItems(category) {
+    setError('')
+    setLibraryCategory(category)
+
+    try {
+      setLibraryItems(await getLibraryItems(category))
+      setNav('library')
+      setView('libraryList')
     } catch (e) {
       setError(e.message)
     }
@@ -409,6 +448,7 @@ export default function App() {
       setSelectedPatient(null)
       setSelectedPrescription(null)
       setPrescriptions([])
+      setPatientDocuments([])
       setDocEntries([])
       setDocEntryImageCounts({})
       setDocImages([])
@@ -506,6 +546,61 @@ export default function App() {
     }
   }
 
+  async function handleSaveLibraryItem(event) {
+    event.preventDefault()
+    setSaving(true)
+    setError('')
+
+    try {
+      if (libraryCategory === 'archiv') throw new Error('Das Archiv bleibt erstmal leer.')
+      if (!libraryForm.title.trim()) throw new Error('Bitte eine kurze Überschrift eintragen.')
+      if (!libraryForm.file) throw new Error('Bitte eine Datei auswählen.')
+
+      await saveLibraryItem({
+        ...libraryForm,
+        category: libraryCategory,
+        title: libraryForm.title.trim(),
+        note: libraryForm.note.trim(),
+      })
+
+      await loadLibraryItems(libraryCategory)
+      setSuccessMessage('Datei wurde gespeichert.')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleSavePatientDocument(event) {
+    event.preventDefault()
+    if (!selectedPatient) return setError('Kein Patient ausgewählt.')
+
+    setSaving(true)
+    setError('')
+
+    try {
+      if (!patientDocumentForm.documentDate) throw new Error('Bitte Datum ausfüllen.')
+      if (!patientDocumentForm.title.trim()) throw new Error('Bitte eine kurze Überschrift eintragen.')
+      if (!patientDocumentForm.file) throw new Error('Bitte eine Datei auswählen.')
+
+      await savePatientDocument({
+        ...patientDocumentForm,
+        patientId: selectedPatient.id,
+        title: patientDocumentForm.title.trim(),
+        note: patientDocumentForm.note.trim(),
+      })
+
+      await reloadPatientDocuments(selectedPatient.id)
+      setView('patientDetail')
+      setSuccessMessage('Dokument/Befund wurde gespeichert.')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleImageUpload(event) {
     const files = Array.from(event.target.files || [])
     if (!files.length) return
@@ -521,8 +616,50 @@ export default function App() {
     }
   }
 
+  async function handleLibraryFileChange(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setError('')
+
+    try {
+      const storedFile = await prepareStoredFile(file)
+      setLibraryForm(prev => ({ ...prev, file: storedFile }))
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  async function handlePatientDocumentFileChange(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setError('')
+
+    try {
+      const storedFile = await prepareStoredFile(file)
+      setPatientDocumentForm(prev => ({ ...prev, file: storedFile }))
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   function handleRemoveImage(imageId) {
     setDocImages(prev => prev.filter(image => image.id !== imageId))
+  }
+
+  function openStoredFile(file) {
+    if (!file?.dataUrl) return
+
+    if (file.mimeType?.startsWith('image/')) {
+      setFullscreenImage(file.dataUrl)
+      return
+    }
+
+    const opened = window.open(file.dataUrl, '_blank', 'noopener,noreferrer')
+    if (!opened) setError('Die Datei konnte nicht geöffnet werden. Bitte Pop-ups/Weiterleitungen erlauben.')
   }
 
   function printPrescriptionDocs() {
@@ -574,8 +711,12 @@ export default function App() {
                 className={`sidebar-item ${nav === key ? 'is-active' : ''}`}
                 onClick={() => {
                   setNav(key)
+                  setSuccessMessage('')
                   if (key === 'patients') setView('list')
                   if (key === 'backup') setView('list')
+                  if (key === 'library') setView('libraryHome')
+                  if (key === 'exercises') setView('list')
+                  if (key === 'settings') setView('list')
                 }}
               >
                 <Icon size={18} />
@@ -607,9 +748,130 @@ export default function App() {
             {error && <p className="msg msg-error">{error}</p>}
             {successMessage && <p className="msg msg-success">{successMessage}</p>}
 
-            {nav === 'exercises' && <Placeholder title="Übungen" onBack={goPatients} />}
-            {nav === 'library' && <Placeholder title="Bibliothek" onBack={goPatients} />}
-            {nav === 'settings' && <Placeholder title="Einstellungen" onBack={goPatients} />}
+            {nav === 'exercises' && <section className="surface-card stack-lg">
+              <h2 className="section-title">Übungen</h2>
+              <p className="muted">Dieser Bereich wird später erweitert.</p>
+              <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
+            </section>}
+
+            {nav === 'settings' && <section className="surface-card stack-lg">
+              <h2 className="section-title">Einstellungen</h2>
+              <p className="muted">Dieser Bereich wird später erweitert.</p>
+              <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
+            </section>}
+
+            {nav === 'library' && view === 'libraryHome' && (
+              <section className="surface-card stack-lg">
+                <h2 className="section-title">Bibliothek</h2>
+                <div className="library-grid">
+                  {LIBRARY_SECTIONS.map(section => (
+                    <button
+                      key={section.key}
+                      type="button"
+                      className={`library-tile ${section.key === 'archiv' ? 'is-muted' : ''}`}
+                      onClick={() => section.key === 'archiv' ? setError('Das Archiv bleibt erstmal leer.') : loadLibraryItems(section.key)}
+                    >
+                      <Library size={18} />
+                      <span className="library-tile-title">{section.title}</span>
+                      <span className="library-tile-text">{section.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {nav === 'library' && view === 'libraryList' && (
+              <section className="surface-card stack">
+                <div className="row-between prescription-header">
+                  <div>
+                    <h2 className="section-title">{libraryTitle(libraryCategory)}</h2>
+                    <p className="muted">PDF, JPG oder PNG mit kurzer Überschrift speichern.</p>
+                  </div>
+
+                  <button
+                    className="btn btn-green"
+                    onClick={() => {
+                      setLibraryForm({ ...EMPTY_LIBRARY_FORM, category: libraryCategory })
+                      setView('libraryEdit')
+                    }}
+                  >
+                    <Plus size={16} />
+                    Datei
+                  </button>
+                </div>
+
+                <button className="btn btn-ghost-inline" onClick={() => setView('libraryHome')}>
+                  <ArrowLeft size={16} />
+                  Zurück
+                </button>
+
+                <div className="stack">
+                  {libraryItems.length === 0 ? (
+                    <p className="muted">Noch keine Dateien.</p>
+                  ) : (
+                    libraryItems.map(item => (
+                      <StoredFileCard
+                        key={item.id}
+                        title={item.title}
+                        date={item.createdAt}
+                        note={item.note}
+                        file={item.file}
+                        tone="library"
+                        onOpen={openStoredFile}
+                      />
+                    ))
+                  )}
+                </div>
+              </section>
+            )}
+
+            {nav === 'library' && view === 'libraryEdit' && (
+              <section className="surface-card">
+                <form className="stack" onSubmit={handleSaveLibraryItem}>
+                  <button type="button" className="btn btn-ghost-inline" onClick={() => setView('libraryList')}>
+                    <ArrowLeft size={16} />
+                    Abbrechen
+                  </button>
+
+                  <h2 className="section-title">Datei für {libraryTitle(libraryCategory)}</h2>
+
+                  <input
+                    className="field"
+                    placeholder="Kurze Überschrift, z. B. Proximale Humerusfraktur"
+                    value={libraryForm.title}
+                    onChange={event => setLibraryForm(prev => ({ ...prev, title: event.target.value }))}
+                  />
+
+                  <textarea
+                    className="field library-note"
+                    placeholder="Notiz optional"
+                    value={libraryForm.note}
+                    onChange={event => setLibraryForm(prev => ({ ...prev, note: event.target.value }))}
+                  />
+
+                  <label className="upload-card">
+                    <span>
+                      <Plus className="upload-plus" />
+                      {libraryForm.file ? libraryForm.file.fileName : 'PDF, JPG oder PNG auswählen'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      onChange={handleLibraryFileChange}
+                    />
+                  </label>
+
+                  <div className="row-end">
+                    <button type="button" className="btn btn-ghost" onClick={() => setView('libraryList')}>Abbrechen</button>
+                    <button className="btn btn-primary" disabled={saving}>
+                      <Save size={16} />
+                      {saving ? 'Speichern...' : 'Speichern'}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            )}
 
             {(nav === 'patients' || nav === 'backup') && view === 'list' && (
               <section className="list-layout">
@@ -744,6 +1006,43 @@ export default function App() {
                     )}
                   </div>
                 </article>
+
+                <article className="surface-card card-patient-documents">
+                  <div className="row-between prescription-header">
+                    <h3 className="section-subtitle">Dokumente / Befunde</h3>
+                    <button
+                      className="btn btn-green"
+                      onClick={() => {
+                        setPatientDocumentForm({
+                          ...EMPTY_PATIENT_DOCUMENT_FORM,
+                          documentDate: todayIso(),
+                        })
+                        setView('patientDocumentEdit')
+                      }}
+                    >
+                      <Plus size={16} />
+                      Dokument
+                    </button>
+                  </div>
+
+                  <div className="stack">
+                    {patientDocuments.length === 0 ? (
+                      <p className="muted">Noch keine Dokumente/Befunde.</p>
+                    ) : (
+                      patientDocuments.map(item => (
+                        <StoredFileCard
+                          key={item.id}
+                          title={item.title}
+                          date={item.documentDate}
+                          note={item.note}
+                          file={item.file}
+                          tone="patient"
+                          onOpen={openStoredFile}
+                        />
+                      ))
+                    )}
+                  </div>
+                </article>
               </section>
             )}
 
@@ -857,6 +1156,61 @@ export default function App() {
               </section>
             )}
 
+            {view === 'patientDocumentEdit' && selectedPatient && (
+              <section className="surface-card">
+                <form className="stack" onSubmit={handleSavePatientDocument}>
+                  <button type="button" className="btn btn-ghost-inline" onClick={() => setView('patientDetail')}>
+                    <ArrowLeft size={16} />
+                    Abbrechen
+                  </button>
+
+                  <h2 className="section-title">Neues Dokument / neuer Befund</h2>
+
+                  <input
+                    type="date"
+                    className="field"
+                    value={patientDocumentForm.documentDate}
+                    onChange={event => setPatientDocumentForm(prev => ({ ...prev, documentDate: event.target.value }))}
+                  />
+
+                  <input
+                    className="field"
+                    placeholder="Kurze Überschrift, z. B. MRT Schulter rechts"
+                    value={patientDocumentForm.title}
+                    onChange={event => setPatientDocumentForm(prev => ({ ...prev, title: event.target.value }))}
+                  />
+
+                  <textarea
+                    className="field library-note"
+                    placeholder="Notiz optional"
+                    value={patientDocumentForm.note}
+                    onChange={event => setPatientDocumentForm(prev => ({ ...prev, note: event.target.value }))}
+                  />
+
+                  <label className="upload-card">
+                    <span>
+                      <Plus className="upload-plus" />
+                      {patientDocumentForm.file ? patientDocumentForm.file.fileName : 'PDF, JPG oder PNG auswählen'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      onChange={handlePatientDocumentFileChange}
+                    />
+                  </label>
+
+                  <div className="row-end">
+                    <button type="button" className="btn btn-ghost" onClick={() => setView('patientDetail')}>Abbrechen</button>
+                    <button className="btn btn-primary" disabled={saving}>
+                      <Save size={16} />
+                      {saving ? 'Speichern...' : 'Speichern'}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            )}
+
             {view === 'prescriptionEdit' && selectedPatient && (
               <section className="surface-card">
                 <form className="stack" onSubmit={handleSavePrescription}>
@@ -906,22 +1260,22 @@ export default function App() {
                     onChange={event => setDocForm(prev => ({ ...prev, entryDate: event.target.value }))}
                   />
 
-                 <div className="toolbar-box">
-  <p className="toolbar-title">Schreibstütze</p>
+                  <div className="toolbar-box">
+                    <p className="toolbar-title">Schreibstütze</p>
 
-  <div className="toolbar-row">
-    {TOOLBAR_INSERTS.map(item => (
-      <button
-        key={item.label}
-        type="button"
-        onClick={() => insertSymbolText(item.insert)}
-        className="pill-btn"
-      >
-        {item.label}
-      </button>
-    ))}
-  </div>
-</div>
+                    <div className="toolbar-row">
+                      {TOOLBAR_INSERTS.map(item => (
+                        <button
+                          key={item.label}
+                          type="button"
+                          onClick={() => insertSymbolText(item.insert)}
+                          className="pill-btn"
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
                   <textarea
                     ref={docTextareaRef}
@@ -938,9 +1292,12 @@ export default function App() {
 
                     {docImages.map(image => (
                       <div key={image.id} className="image-card">
-                        <img src={image.dataUrl} alt={image.fileName} className="image-preview"
-  			onClick={() => setFullscreenImage(image.dataUrl)}
-			/>
+                        <img
+                          src={image.dataUrl}
+                          alt={image.fileName}
+                          className="image-preview"
+                          onClick={() => setFullscreenImage(image.dataUrl)}
+                        />
                         <p className="image-name">{image.fileName}</p>
                         <button type="button" className="btn btn-danger" onClick={() => handleRemoveImage(image.id)}>Bild entfernen</button>
                       </div>

@@ -712,3 +712,86 @@ justify-content:center;
     padding-top: 8px;
   }
 }
+
+
+/* Bibliothek + Patientendokumente */
+
+.library-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.library-tile {
+  border: 1px solid #d8cdc2;
+  background: #fff;
+  border-radius: 10px;
+  padding: 14px;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.library-tile:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(85, 65, 45, 0.08);
+}
+
+.library-tile.is-muted {
+  opacity: .62;
+}
+
+.library-tile-title {
+  font-weight: 650;
+  font-size: .9rem;
+}
+
+.library-tile-text {
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.35;
+}
+
+.ui-card-file {
+  min-height: 48px;
+}
+
+.ui-card-file-library {
+  background: #f7fbff;
+  border-color: #d8e3ee;
+}
+
+.ui-card-file-patient,
+.card-patient-documents {
+  background: #fffaf3;
+  border-color: #ead8c7;
+}
+
+.library-note {
+  min-height: 90px;
+  resize: vertical;
+}
+
+@media (min-width: 768px) {
+  .library-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Schreibstütze ruhiger: alle Buttons gleich groß */
+
+.toolbar-row {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.pill-btn {
+  width: 86px;
+  height: 86px;
+  flex: 0 0 86px;
+  padding: 6px;
+  text-align: center;
+  line-height: 1.15;
+  white-space: normal;
+}
