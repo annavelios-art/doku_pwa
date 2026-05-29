@@ -981,32 +981,6 @@ export default function App() {
                   </div>
                 </article>
 
-                <article className="surface-card">
-                  <div className="row-between prescription-header">
-                    <h3 className="section-subtitle">Verordnungen</h3>
-                    <button
-                      className="btn btn-green"
-                      onClick={() => {
-                        setPrescriptionForm(EMPTY_PRESCRIPTION_FORM)
-                        setView('prescriptionEdit')
-                      }}
-                    >
-                      <Plus size={16} />
-                      Verordnung
-                    </button>
-                  </div>
-
-                  <div className="prescription-list">
-                    {prescriptions.length === 0 ? (
-                      <p className="muted">Noch keine Verordnungen.</p>
-                    ) : (
-                      prescriptions.map(item => (
-                        <PrescriptionCard key={item.id} prescription={item} onOpen={loadPrescriptionDetail} />
-                      ))
-                    )}
-                  </div>
-                </article>
-
                 <article className="surface-card card-patient-documents">
                   <div className="row-between prescription-header">
                     <h3 className="section-subtitle">Dokumente / Befunde</h3>
@@ -1039,6 +1013,31 @@ export default function App() {
                           tone="patient"
                           onOpen={openStoredFile}
                         />
+                      ))
+                    )}
+                  </div>
+                </article>
+ <article className="surface-card">
+                  <div className="row-between prescription-header">
+                    <h3 className="section-subtitle">Verordnungen</h3>
+                    <button
+                      className="btn btn-green"
+                      onClick={() => {
+                        setPrescriptionForm(EMPTY_PRESCRIPTION_FORM)
+                        setView('prescriptionEdit')
+                      }}
+                    >
+		   <Plus size={16} />
+                      Verordnung
+                    </button>
+                  </div>
+
+                  <div className="prescription-list">
+                    {prescriptions.length === 0 ? (
+                      <p className="muted">Noch keine Verordnungen.</p>
+                    ) : (
+                      prescriptions.map(item => (
+                        <PrescriptionCard key={item.id} prescription={item} onOpen={loadPrescriptionDetail} />
                       ))
                     )}
                   </div>
