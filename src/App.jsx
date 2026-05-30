@@ -658,8 +658,13 @@ export default function App() {
       return
     }
 
-    const opened = window.open(file.dataUrl, '_blank', 'noopener,noreferrer')
-    if (!opened) setError('Die Datei konnte nicht geöffnet werden. Bitte Pop-ups/Weiterleitungen erlauben.')
+    setError('')
+	const opened = window.open(file.dataUrl, '_blank')
+window.setTimeout(() => {
+  if (!opened) {
+    setError('Falls die Datei nicht geöffnet wurde: Bitte Pop-ups/Weiterleitungen erlauben.')
+  }
+}, 500)
   }
 
   function printPrescriptionDocs() {
