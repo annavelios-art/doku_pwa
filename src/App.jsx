@@ -650,22 +650,44 @@ export default function App() {
     setDocImages(prev => prev.filter(image => image.id !== imageId))
   }
 
-  function openStoredFile(file) {
-    if (!file?.dataUrl) return
+  function dataUrlToBlob(dataUrl) {
+  const [header, base64] = dataUrl.split(',')
+  const mimeMatch = header.match(/data:(.*?);base64/)
+  const mimeType = mimeMatch?.[1] || 'application/octet-stream'
 
-    if (file.mimeType?.startsWith('image/')) {
-      setFullscreenImage(file.dataUrl)
-      return
-    }
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
 
-    setError('')
-	const opened = window.open(file.dataUrl, '_blank')
-window.setTimeout(() => {
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+
+  return new Blob([bytes], { type: mimeType })
+}
+
+function openStoredFile(file) {
+  if (!file?.dataUrl) return
+
+  setError('')
+
+  if (file.mimeType?.startsWith('image/')) {
+    setFullscreenImage(file.dataUrl)
+    return
+  }
+
+  const blob = dataUrlToBlob(file.dataUrl)
+  const url = URL.createObjectURL(blob)
+
+  const opened = window.open(url, '_blank')
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url)
+  }, 60000)
+
   if (!opened) {
-    setError('Falls die Datei nicht geöffnet wurde: Bitte Pop-ups/Weiterleitungen erlauben.')
+    setError('Die Datei konnte nicht geöffnet werden. Bitte Pop-ups/Weiterleitungen erlauben.')
   }
-}, 500)
-  }
+}
 
   function printPrescriptionDocs() {
     if (!selectedPrescription) return
