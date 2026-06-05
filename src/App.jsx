@@ -708,9 +708,41 @@ function openStoredFile(file) {
   }
 
   function insertSymbolText(textToInsert) {
-    setDocForm(prev => ({ ...prev, text: `${prev.text}${prev.text ? ' ' : ''}${textToInsert}` }))
-    docTextareaRef.current?.focus()
+  const textarea = docTextareaRef.current
+
+  if (!textarea) {
+    setDocForm(prev => ({
+      ...prev,
+      text: `${prev.text}${prev.text ? ' ' : ''}${textToInsert}`
+    }))
+    return
   }
+
+  const start = textarea.selectionStart ?? 0
+  const end = textarea.selectionEnd ?? start
+
+  setDocForm(prev => {
+    const before = prev.text.slice(0, start)
+    const after = prev.text.slice(end)
+
+    const needsSpaceBefore = before && !before.endsWith(' ') && !before.endsWith('\n')
+    const needsSpaceAfter = after && !after.startsWith(' ') && !after.startsWith('\n')
+
+    const insertText =
+      `${needsSpaceBefore ? ' ' : ''}${textToInsert}${needsSpaceAfter ? ' ' : ''}`
+
+    return {
+      ...prev,
+      text: `${before}${insertText}${after}`
+    }
+  })
+
+  window.setTimeout(() => {
+    textarea.focus()
+    const newPosition = start + textToInsert.length + (start > 0 ? 1 : 0)
+    textarea.setSelectionRange(newPosition, newPosition)
+  }, 0)
+}
 
   function goPatients() {
     setNav('patients')
