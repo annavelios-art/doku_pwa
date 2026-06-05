@@ -1034,7 +1034,7 @@ function openStoredFile(file) {
                         setView('patientEdit')
                       }}
                     >
-                      <Edit3 size={15} />
+                      <Edit3 size={14} />
                       Bearbeiten
                     </button>
                   </div>
@@ -1130,8 +1130,19 @@ function openStoredFile(file) {
                         title="Doku drucken / als PDF speichern"
                         aria-label="Doku drucken oder als PDF speichern"
                       >
-                        <Printer size={18} />
+                        <Printer size={14} />
                       </button>
+<button
+  type="button"
+  className="btn btn-ghost"
+  onClick={() => {
+    setPrescriptionForm(selectedPrescription)
+    setView('prescriptionEdit')
+  }}
+>
+  <Edit3 size={14} />
+  Bearbeiten
+</button>
                     </div>
                   </article>
 
