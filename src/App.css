@@ -301,7 +301,7 @@ textarea {
   border: 1px solid #ddd3c8;
   border-radius: 10px;
   background: white;
-  padding: 10px 12px 10px 38px;
+  padding: 3px 10px 3px 30px;
 }
 
 .search-icon {
@@ -332,8 +332,8 @@ textarea {
 
 .btn {
   border: none;
-  border-radius: 10px;
-  padding: 7px 10px;
+  border-radius: 9px;
+  padding: 5px 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -361,7 +361,7 @@ textarea {
   background: #eef4fb;
   color: #3a638f;
   border: 1px solid #d8e3ee;
-  padding-inline: 13px;
+  padding-inline: 8px;
 }
 
 .btn-ghost,

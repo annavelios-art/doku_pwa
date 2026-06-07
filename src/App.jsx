@@ -11,6 +11,7 @@ import {
   savePatient, savePatientDocument, savePrescription,
 } from './lib/patientsDb'
 import './App.css'
+import { supabase } from './lib/supabase'
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
 const EMPTY_PRESCRIPTION_FORM = { id: '', issueDate: '', remedy: '', createdAt: '' }
@@ -38,6 +39,16 @@ const TOOLBAR_INSERTS = [
   { label: '🚶 Mobilität / Gangbild', insert: '🚶' },
   { label: '🌬️ Atmung', insert: '🌬️' },
 ]
+
+const USER_ROLES = {
+  OWNER: 'owner',
+  STAFF: 'staff',
+}
+
+const USER_ROLE_LABELS = {
+  [USER_ROLES.OWNER]: 'Praxisleitung',
+  [USER_ROLES.STAFF]: 'Mitarbeiter',
+}
 
 function createZipWithBackupJson(jsonText) {
   const fileName = 'backup.json'
@@ -291,6 +302,11 @@ export default function App() {
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
+  const encryptedImportRef = useRef(null)
+  const [userRole, setUserRole] = useState(() => window.localStorage.getItem('pwaUserRole') || USER_ROLES.OWNER)
+  const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
+  const isOwner = userRole === USER_ROLES.OWNER
+  const isStaff = userRole === USER_ROLES.STAFF
 
   const filteredPatients = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -407,7 +423,102 @@ export default function App() {
       setError(e.message)
     }
   }
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
 
+  bytes.forEach(byte => {
+    binary += String.fromCharCode(byte)
+  })
+
+  return window.btoa(binary)
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = window.atob(base64)
+  const bytes = new Uint8Array(binary.length)
+
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+
+  return bytes.buffer
+}
+
+async function createEncryptionKey(password, salt) {
+  const encoder = new TextEncoder()
+
+  const keyMaterial = await window.crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  )
+
+  return window.crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 250000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    {
+      name: 'AES-GCM',
+      length: 256
+    },
+    false,
+    ['encrypt', 'decrypt']
+  )
+}
+
+async function encryptText(text, password) {
+  const encoder = new TextEncoder()
+  const salt = window.crypto.getRandomValues(new Uint8Array(16))
+  const iv = window.crypto.getRandomValues(new Uint8Array(12))
+  const key = await createEncryptionKey(password, salt)
+
+  const encryptedBuffer = await window.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv
+    },
+    key,
+    encoder.encode(text)
+  )
+
+  return JSON.stringify({
+    version: 1,
+    algorithm: 'AES-GCM',
+    kdf: 'PBKDF2-SHA256',
+    iterations: 250000,
+    salt: arrayBufferToBase64(salt),
+    iv: arrayBufferToBase64(iv),
+    data: arrayBufferToBase64(encryptedBuffer)
+  })
+}
+async function decryptText(encryptedText, password) {
+  const payload = JSON.parse(encryptedText)
+  const decoder = new TextDecoder()
+
+  const salt = new Uint8Array(base64ToArrayBuffer(payload.salt))
+  const iv = new Uint8Array(base64ToArrayBuffer(payload.iv))
+  const encryptedBuffer = base64ToArrayBuffer(payload.data)
+
+  const key = await createEncryptionKey(password, salt)
+
+  const decryptedBuffer = await window.crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv
+    },
+    key,
+    encryptedBuffer
+  )
+
+  return decoder.decode(decryptedBuffer)
+}
   async function handleExportBackup() {
     setError('')
     setSuccessMessage('')
@@ -428,6 +539,98 @@ export default function App() {
       setError(e.message)
     }
   }
+
+async function handleExportEncryptedBackup() {
+  setError('')
+  setSuccessMessage('')
+
+  try {
+    const password = window.prompt('Praxis-Passwort für Verschlüsselung eingeben:')
+
+    if (!password) {
+      setError('Verschlüsselter Export abgebrochen.')
+      return
+    }
+
+    const backup = await exportAllData()
+    const json = JSON.stringify(backup)
+    const encryptedText = await encryptText(json, password)
+
+    const blob = new Blob([encryptedText], {
+      type: 'application/octet-stream'
+    })
+
+    const date = new Date().toISOString().slice(0, 10)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+
+    link.href = url
+    link.download = `praxis-data-${date}.enc`
+    link.click()
+
+    URL.revokeObjectURL(url)
+    setSuccessMessage('Verschlüsseltes Backup erfolgreich exportiert.')
+  } catch (e) {
+    setError(e.message)
+  }
+}
+
+
+
+
+
+async function handleTestSupabaseConnection() {
+  setError('')
+  setSuccessMessage('')
+
+  try {
+    const { data, error } = await supabase
+      .storage
+      .from('praxis-backup')
+      .list('', { limit: 1 })
+
+    if (error) throw error
+
+    setSuccessMessage(`Supabase-Verbindung steht. Dateien gefunden: ${data.length}`)
+  } catch (e) {
+    setError(`Supabase-Test fehlgeschlagen: ${e.message}`)
+  }
+}
+
+
+
+async function handleTestDecryptFile(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+
+  if (!file) return
+
+  setError('')
+  setSuccessMessage('')
+
+  try {
+    const password = window.prompt('Passwort für verschlüsseltes Backup eingeben:')
+
+    if (!password) {
+      setError('Entschlüsselung abgebrochen.')
+      return
+    }
+
+    const encryptedText = await file.text()
+    const jsonText = await decryptText(encryptedText, password)
+    const parsed = JSON.parse(jsonText)
+
+    console.log('ENTSCHLÜSSELTES BACKUP:')
+    console.log(parsed)
+
+    setSuccessMessage('Entschlüsselung erfolgreich. Das Backup wurde nur getestet, nicht importiert.')
+    window.alert('Entschlüsselung erfolgreich. Das Backup wurde nur getestet, nicht importiert.')
+  } catch (e) {
+    setError('Passwort falsch oder verschlüsselte Datei beschädigt.')
+    window.alert('Passwort falsch oder verschlüsselte Datei beschädigt.')
+  }
+}
+
 
   async function handleImportFile(event) {
     const file = event.target.files?.[0]
@@ -506,8 +709,17 @@ export default function App() {
         remedy: prescriptionForm.remedy.trim(),
       })
 
-      setPrescriptions(await getPrescriptionsByPatientId(selectedPatient.id))
-      setView('patientDetail')
+      const updatedPrescriptions = await getPrescriptionsByPatientId(selectedPatient.id)
+      setPrescriptions(updatedPrescriptions)
+
+      const updatedPrescription = updatedPrescriptions.find(item => item.id === prescriptionForm.id)
+
+      if (updatedPrescription) {
+        setSelectedPrescription(updatedPrescription)
+        setView('prescriptionDetail')
+      } else {
+        setView('patientDetail')
+      }
     } catch (e) {
       setError(e.message)
     } finally {
@@ -749,6 +961,29 @@ function openStoredFile(file) {
     setView('list')
   }
 
+  function handleChangeRole(role) {
+    setUserRole(role)
+    window.localStorage.setItem('pwaUserRole', role)
+    setSuccessMessage(`Rolle gespeichert: ${USER_ROLE_LABELS[role]}`)
+    setError('')
+  }
+
+  function handleChangeUserName(value) {
+    setUserName(value)
+    window.localStorage.setItem('pwaUserName', value)
+  }
+
+  async function handleStaffExportChanges() {
+    setError('')
+    setSuccessMessage('')
+
+    const name = userName.trim() || 'Mitarbeiter'
+
+    setSuccessMessage(
+      `Änderungs-Export für ${name} ist vorbereitet. In der nächsten Stufe werden nur neue Patienten, Verordnungen und Doku-Einträge verschlüsselt an die Praxisleitung übertragen.`
+    )
+  }
+
   return (
     <div className="app-shell">
       <div className="app-grid">
@@ -778,7 +1013,7 @@ function openStoredFile(file) {
                   if (key === 'settings') setView('list')
                 }}
               >
-                <Icon size={18} />
+                <Icon size={16} />
                 <span>{label}</span>
               </button>
             ))}
@@ -815,7 +1050,60 @@ function openStoredFile(file) {
 
             {nav === 'settings' && <section className="surface-card stack-lg">
               <h2 className="section-title">Einstellungen</h2>
-              <p className="muted">Dieser Bereich wird später erweitert.</p>
+
+              <div className="stack">
+                <div>
+                  <h3 className="section-subtitle">Rolle auf diesem Gerät</h3>
+                  <p className="muted">
+                    Diese Einstellung gilt nur lokal für dieses Gerät. Sie ist ein Arbeitsmodus, noch kein echtes Login-System.
+                  </p>
+                </div>
+
+                <label className="field-label">
+                  Benutzername / Kürzel
+                  <input
+                    className="field"
+                    placeholder="z. B. Anna oder Sabine"
+                    value={userName}
+                    onChange={event => handleChangeUserName(event.target.value)}
+                  />
+                </label>
+
+                <div className="stack-sm">
+                  <button
+                    type="button"
+                    className={`btn ${isOwner ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => handleChangeRole(USER_ROLES.OWNER)}
+                  >
+                    Praxisleitung
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`btn ${isStaff ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => handleChangeRole(USER_ROLES.STAFF)}
+                  >
+                    Mitarbeiter
+                  </button>
+                </div>
+
+                <p className="muted">
+                  Aktuelle Rolle: <strong>{USER_ROLE_LABELS[userRole]}</strong>
+                </p>
+
+                {isStaff && (
+                  <p className="muted">
+                    Mitarbeiter-Modus: Patient anlegen, Verordnung anlegen und Doku schreiben. Backup-Export sendet später nur Änderungen an die Praxisleitung.
+                  </p>
+                )}
+
+                {isOwner && (
+                  <p className="muted">
+                    Praxisleitungs-Modus: voller Zugriff inklusive ZIP-Backup, Import, Dokumente/Befunde und Cloud-Testfunktionen.
+                  </p>
+                )}
+              </div>
+
               <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
             </section>}
 
@@ -847,16 +1135,18 @@ function openStoredFile(file) {
                     <p className="muted">PDF, JPG oder PNG mit kurzer Überschrift speichern.</p>
                   </div>
 
-                  <button
-                    className="btn btn-green"
-                    onClick={() => {
-                      setLibraryForm({ ...EMPTY_LIBRARY_FORM, category: libraryCategory })
-                      setView('libraryEdit')
-                    }}
-                  >
-                    <Plus size={16} />
-                    Datei
-                  </button>
+                  {isOwner && (
+                    <button
+                      className="btn btn-green"
+                      onClick={() => {
+                        setLibraryForm({ ...EMPTY_LIBRARY_FORM, category: libraryCategory })
+                        setView('libraryEdit')
+                      }}
+                    >
+                      <Plus size={16} />
+                      Datei
+                    </button>
+                  )}
                 </div>
 
                 <button className="btn btn-ghost-inline" onClick={() => setView('libraryHome')}>
@@ -940,7 +1230,7 @@ function openStoredFile(file) {
                   <div className="patient-actions">
                     <div className="search-row">
                       <div className="search-wrap">
-                        <Search size={18} className="search-icon" />
+                        <Search size={16} className="search-icon" />
                         <input
                           className="search-input"
                           placeholder="Patient suchen"
@@ -949,7 +1239,7 @@ function openStoredFile(file) {
                         />
                       </div>
                       <button type="button" className="btn btn-search" aria-label="Patient suchen">
-                        <Search size={18} />
+                        <Search size={16} />
                       </button>
                     </div>
 
@@ -995,18 +1285,58 @@ function openStoredFile(file) {
 
                   <div className="backup-card">
                     <h3>Datensicherung</h3>
-                    <p>Alle lokalen Daten als ZIP mit backup.json.</p>
+                    <p>
+                      {isOwner
+                        ? 'Alle lokalen Daten als ZIP mit backup.json.'
+                        : 'Überträgt später nur neue Patienten, Verordnungen und Doku-Einträge an die Praxisleitung.'}
+                    </p>
 
                     <div className="stack-sm">
-                      <button className="btn btn-secondary" onClick={handleExportBackup}>Backup exportieren</button>
-                      <button className="btn btn-ghost" onClick={() => importInputRef.current?.click()}>Backup importieren</button>
-                      <input
-                        ref={importInputRef}
-                        type="file"
-                        accept=".json,.zip,application/json,application/zip"
-                        className="hidden"
-                        onChange={handleImportFile}
-                      />
+                      {isOwner ? (
+                        <>
+                          <button className="btn btn-secondary" onClick={handleExportBackup}>
+                            Backup exportieren
+                          </button>
+
+                          <button className="btn btn-secondary" onClick={handleExportEncryptedBackup}>
+                            🔐 Verschlüsseltes Backup exportieren
+                          </button>
+
+                          <button className="btn btn-ghost" onClick={() => encryptedImportRef.current?.click()}>
+                            🔓 Verschlüsseltes Backup testen
+                          </button>
+
+                          <input
+                            ref={encryptedImportRef}
+                            type="file"
+                            accept=".enc"
+                            className="hidden"
+                            onChange={handleTestDecryptFile}
+                          />
+
+                          <button className="btn btn-ghost" onClick={() => importInputRef.current?.click()}>
+                            Backup importieren
+                          </button>
+
+                          <input
+                            ref={importInputRef}
+                            type="file"
+                            accept=".json,.zip,application/json,application/zip"
+                            className="hidden"
+                            onChange={handleImportFile}
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn btn-secondary" onClick={handleStaffExportChanges}>
+                            Backup exportieren
+                          </button>
+
+                          <p className="muted">
+                            Mitarbeiter-Modus: Dieser Button wird in der nächsten Stufe die eigenen Änderungen verschlüsselt übertragen.
+                          </p>
+                        </>
+                      )}
                     </div>
                   </div>
                 </article>
@@ -1040,42 +1370,44 @@ function openStoredFile(file) {
                   </div>
                 </article>
 
-                <article className="surface-card card-patient-documents">
-                  <div className="row-between prescription-header">
-                    <h3 className="section-subtitle">Dokumente / Befunde</h3>
-                    <button
-                      className="btn btn-green"
-                      onClick={() => {
-                        setPatientDocumentForm({
-                          ...EMPTY_PATIENT_DOCUMENT_FORM,
-                          documentDate: todayIso(),
-                        })
-                        setView('patientDocumentEdit')
-                      }}
-                    >
-                      <Plus size={16} />
-                      Dokument
-                    </button>
-                  </div>
+                {isOwner && (
+                  <article className="surface-card card-patient-documents">
+                    <div className="row-between prescription-header">
+                      <h3 className="section-subtitle">Dokumente / Befunde</h3>
+                      <button
+                        className="btn btn-green"
+                        onClick={() => {
+                          setPatientDocumentForm({
+                            ...EMPTY_PATIENT_DOCUMENT_FORM,
+                            documentDate: todayIso(),
+                          })
+                          setView('patientDocumentEdit')
+                        }}
+                      >
+                        <Plus size={14} />
+                        Dokument
+                      </button>
+                    </div>
 
-                  <div className="stack">
-                    {patientDocuments.length === 0 ? (
-                      <p className="muted">Noch keine Dokumente/Befunde.</p>
-                    ) : (
-                      patientDocuments.map(item => (
-                        <StoredFileCard
-                          key={item.id}
-                          title={item.title}
-                          date={item.documentDate}
-                          note={item.note}
-                          file={item.file}
-                          tone="patient"
-                          onOpen={openStoredFile}
-                        />
-                      ))
-                    )}
-                  </div>
-                </article>
+                    <div className="stack">
+                      {patientDocuments.length === 0 ? (
+                        <p className="muted">Noch keine Dokumente/Befunde.</p>
+                      ) : (
+                        patientDocuments.map(item => (
+                          <StoredFileCard
+                            key={item.id}
+                            title={item.title}
+                            date={item.documentDate}
+                            note={item.note}
+                            file={item.file}
+                            tone="patient"
+                            onOpen={openStoredFile}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </article>
+                )}
  <article className="surface-card">
                   <div className="row-between prescription-header">
                     <h3 className="section-subtitle">Verordnungen</h3>
@@ -1353,25 +1685,29 @@ function openStoredFile(file) {
                     onChange={event => setDocForm(prev => ({ ...prev, text: event.target.value }))}
                   />
 
-                  <div className="image-grid">
-                    <label className="upload-card">
-                      <span><Plus className="upload-plus" />Bild hinzufügen</span>
-                      <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
-                    </label>
+                  {isOwner ? (
+                    <div className="image-grid">
+                      <label className="upload-card">
+                        <span><Plus className="upload-plus" />Bild hinzufügen</span>
+                        <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
+                      </label>
 
-                    {docImages.map(image => (
-                      <div key={image.id} className="image-card">
-                        <img
-                          src={image.dataUrl}
-                          alt={image.fileName}
-                          className="image-preview"
-                          onClick={() => setFullscreenImage(image.dataUrl)}
-                        />
-                        <p className="image-name">{image.fileName}</p>
-                        <button type="button" className="btn btn-danger" onClick={() => handleRemoveImage(image.id)}>Bild entfernen</button>
-                      </div>
-                    ))}
-                  </div>
+                      {docImages.map(image => (
+                        <div key={image.id} className="image-card">
+                          <img
+                            src={image.dataUrl}
+                            alt={image.fileName}
+                            className="image-preview"
+                            onClick={() => setFullscreenImage(image.dataUrl)}
+                          />
+                          <p className="image-name">{image.fileName}</p>
+                          <button type="button" className="btn btn-danger" onClick={() => handleRemoveImage(image.id)}>Bild entfernen</button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">Bild-Upload ist im Mitarbeiter-Modus deaktiviert.</p>
+                  )}
 
                   <div className="row-end">
                     <button type="button" className="btn btn-ghost" onClick={() => setView('prescriptionDetail')}>Abbrechen</button>
