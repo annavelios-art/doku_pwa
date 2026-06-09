@@ -1754,6 +1754,30 @@ function openStoredFile(file) {
                     />
                   </label>
 
+{patientDocumentForm.file && (
+  <div className="image-card">
+    {patientDocumentForm.file.mimeType?.startsWith('image/') && (
+      <img
+        src={patientDocumentForm.file.dataUrl}
+        alt={patientDocumentForm.file.fileName}
+        className="image-preview"
+        onClick={() => setFullscreenImage(patientDocumentForm.file.dataUrl)}
+      />
+    )}
+
+    <p className="image-name">{patientDocumentForm.file.fileName}</p>
+
+    <button
+      type="button"
+      className="btn btn-danger"
+      onClick={() => setPatientDocumentForm(prev => ({ ...prev, file: null }))}
+    >
+      Datei entfernen
+    </button>
+  </div>
+)}
+
+
                   <div className="row-end">
                     <button type="button" className="btn btn-ghost" onClick={() => setView('patientDetail')}>Abbrechen</button>
                     <button className="btn btn-primary" disabled={saving}>
