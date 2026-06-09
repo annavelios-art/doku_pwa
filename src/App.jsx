@@ -11,7 +11,6 @@ import {
   savePatient, savePatientDocument, savePrescription,
 } from './lib/patientsDb'
 import './App.css'
-import { supabase } from './lib/supabase'
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
 const EMPTY_PRESCRIPTION_FORM = { id: '', issueDate: '', remedy: '', createdAt: '' }
@@ -49,6 +48,114 @@ const USER_ROLE_LABELS = {
   [USER_ROLES.OWNER]: 'Praxisleitung',
   [USER_ROLES.STAFF]: 'Mitarbeiter',
 }
+
+const LAST_MODIFIED_STORAGE_KEY = 'pwaLastModifiedAt'
+const LAST_ENCRYPTED_EXPORT_STORAGE_KEY = 'pwaLastEncryptedExportAt'
+
+const BACKUP_ARRAY_KEYS = [
+  'patients',
+  'prescriptions',
+  'docEntries',
+  'docEntryImages',
+  'patientDocuments',
+  'libraryItems',
+  'recentPatients',
+]
+
+const getNowIso = () => new Date().toISOString()
+
+function readStoredTimestamp(key) {
+  return window.localStorage.getItem(key) || ''
+}
+
+function writeStoredTimestamp(key, value) {
+  window.localStorage.setItem(key, value)
+}
+
+function getItemChangeDate(item) {
+  return item?.updatedAt || item?.createdAt || item?.entryDate || item?.issueDate || item?.documentDate || ''
+}
+
+function isChangedAfter(item, timestamp) {
+  if (!timestamp) return true
+  const changedAt = getItemChangeDate(item)
+  return changedAt && changedAt > timestamp
+}
+
+function stampForSave(item, now = getNowIso()) {
+  return {
+    ...item,
+    createdAt: item.createdAt || now,
+    updatedAt: now,
+  }
+}
+
+function getBackupMaxModifiedAt(backup) {
+  let max = ''
+
+  BACKUP_ARRAY_KEYS.forEach(key => {
+    ;(backup?.[key] || []).forEach(item => {
+      const changedAt = getItemChangeDate(item)
+      if (changedAt && changedAt > max) max = changedAt
+    })
+  })
+
+  return max
+}
+
+function mergeItemsByNewest(currentItems = [], incomingItems = []) {
+  const map = new Map()
+
+  currentItems.forEach(item => {
+    if (item?.id) map.set(item.id, item)
+  })
+
+  incomingItems.forEach(item => {
+    if (!item?.id) return
+
+    const existing = map.get(item.id)
+    if (!existing || getItemChangeDate(item) >= getItemChangeDate(existing)) {
+      map.set(item.id, item)
+    }
+  })
+
+  return Array.from(map.values())
+}
+
+function mergeBackupData(currentBackup, incomingBackup) {
+  const merged = { ...currentBackup }
+
+  BACKUP_ARRAY_KEYS.forEach(key => {
+    merged[key] = mergeItemsByNewest(currentBackup?.[key] || [], incomingBackup?.[key] || [])
+  })
+
+  return merged
+}
+
+function createChangeBackup(fullBackup, changedAfter) {
+  const changedDocEntryIds = new Set(
+    (fullBackup.docEntries || [])
+      .filter(item => isChangedAfter(item, changedAfter))
+      .map(item => item.id)
+  )
+
+  return {
+    type: 'praxis-doku-change-backup',
+    version: 1,
+    exportedAt: getNowIso(),
+    changedAfter: changedAfter || '',
+    patients: (fullBackup.patients || []).filter(item => isChangedAfter(item, changedAfter)),
+    prescriptions: (fullBackup.prescriptions || []).filter(item => isChangedAfter(item, changedAfter)),
+    docEntries: (fullBackup.docEntries || []).filter(item => isChangedAfter(item, changedAfter)),
+    docEntryImages: (fullBackup.docEntryImages || []).filter(item =>
+      isChangedAfter(item, changedAfter) || changedDocEntryIds.has(item.docEntryId)
+    ),
+    patientDocuments: (fullBackup.patientDocuments || []).filter(item => isChangedAfter(item, changedAfter)),
+    libraryItems: (fullBackup.libraryItems || []).filter(item => isChangedAfter(item, changedAfter)),
+    recentPatients: (fullBackup.recentPatients || []).filter(item => isChangedAfter(item, changedAfter)),
+  }
+}
+
 
 function createZipWithBackupJson(jsonText) {
   const fileName = 'backup.json'
@@ -156,6 +263,7 @@ async function readBackupJsonFromZip(file) {
 }
 
 const formatDate = value => (value ? new Date(value).toLocaleDateString('de-DE') : '–')
+const formatDateTime = value => (value ? new Date(value).toLocaleString('de-DE') : 'Noch keine Änderung erfasst')
 const todayIso = () => new Date().toISOString().slice(0, 10)
 const snippet = text => (text || '').split('\n')[0].trim().slice(0, 90) || 'Ohne Text'
 const patientLabel = patient => patient ? `${patient.firstName} ${patient.lastName}` : ''
@@ -230,6 +338,7 @@ function resizeImageToDataUrl(file) {
           mimeType: 'image/jpeg',
           dataUrl: canvas.toDataURL('image/jpeg', 0.8),
           createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         })
       }
 
@@ -252,6 +361,7 @@ function readFileAsDataUrl(file) {
       mimeType: file.type || 'application/octet-stream',
       dataUrl: String(reader.result),
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     })
 
     reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden.'))
@@ -302,9 +412,11 @@ export default function App() {
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
-  const encryptedImportRef = useRef(null)
+  const changeImportRef = useRef(null)
   const [userRole, setUserRole] = useState(() => window.localStorage.getItem('pwaUserRole') || USER_ROLES.OWNER)
   const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
+  const [lastModifiedAt, setLastModifiedAt] = useState(() => readStoredTimestamp(LAST_MODIFIED_STORAGE_KEY))
+  const [lastEncryptedExportAt, setLastEncryptedExportAt] = useState(() => readStoredTimestamp(LAST_ENCRYPTED_EXPORT_STORAGE_KEY))
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
 
@@ -315,6 +427,7 @@ export default function App() {
   }, [patients, query])
 
   const breadcrumbItems = useMemo(() => {
+    if (nav === 'backup') return ['Backup']
     if (nav === 'exercises') return ['Übungen']
     if (nav === 'settings') return ['Einstellungen']
     if (nav === 'library') {
@@ -422,6 +535,12 @@ export default function App() {
     } catch (e) {
       setError(e.message)
     }
+  }
+
+  function markDataChanged(timestamp = getNowIso()) {
+    writeStoredTimestamp(LAST_MODIFIED_STORAGE_KEY, timestamp)
+    setLastModifiedAt(timestamp)
+    return timestamp
   }
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer)
@@ -548,12 +667,20 @@ async function handleExportEncryptedBackup() {
     const password = window.prompt('Praxis-Passwort für Verschlüsselung eingeben:')
 
     if (!password) {
-      setError('Verschlüsselter Export abgebrochen.')
+      setError('Verschlüsselter Änderungs-Export abgebrochen.')
       return
     }
 
-    const backup = await exportAllData()
-    const json = JSON.stringify(backup)
+    const fullBackup = await exportAllData()
+    const changeBackup = createChangeBackup(fullBackup, lastEncryptedExportAt)
+    const changeCount = BACKUP_ARRAY_KEYS.reduce((sum, key) => sum + (changeBackup[key]?.length || 0), 0)
+
+    if (changeCount === 0) {
+      setSuccessMessage('Keine neuen Änderungen seit dem letzten verschlüsselten Änderungs-Export.')
+      return
+    }
+
+    const json = JSON.stringify(changeBackup)
     const encryptedText = await encryptText(json, password)
 
     const blob = new Blob([encryptedText], {
@@ -565,41 +692,22 @@ async function handleExportEncryptedBackup() {
     const link = document.createElement('a')
 
     link.href = url
-    link.download = `praxis-data-${date}.enc`
+    link.download = `praxis-aenderungen-${date}.enc`
     link.click()
 
     URL.revokeObjectURL(url)
-    setSuccessMessage('Verschlüsseltes Backup erfolgreich exportiert.')
+
+    const exportedAt = changeBackup.exportedAt || getNowIso()
+    writeStoredTimestamp(LAST_ENCRYPTED_EXPORT_STORAGE_KEY, exportedAt)
+    setLastEncryptedExportAt(exportedAt)
+
+    setSuccessMessage(`Verschlüsseltes Änderungs-Backup exportiert: ${changeCount} geänderte Einträge.`)
   } catch (e) {
     setError(e.message)
   }
 }
 
-
-
-
-
-async function handleTestSupabaseConnection() {
-  setError('')
-  setSuccessMessage('')
-
-  try {
-    const { data, error } = await supabase
-      .storage
-      .from('praxis-backup')
-      .list('', { limit: 1 })
-
-    if (error) throw error
-
-    setSuccessMessage(`Supabase-Verbindung steht. Dateien gefunden: ${data.length}`)
-  } catch (e) {
-    setError(`Supabase-Test fehlgeschlagen: ${e.message}`)
-  }
-}
-
-
-
-async function handleTestDecryptFile(event) {
+async function handleImportEncryptedChanges(event) {
   const file = event.target.files?.[0]
   event.target.value = ''
 
@@ -609,27 +717,53 @@ async function handleTestDecryptFile(event) {
   setSuccessMessage('')
 
   try {
-    const password = window.prompt('Passwort für verschlüsseltes Backup eingeben:')
+    const password = window.prompt('Passwort für verschlüsseltes Änderungs-Backup eingeben:')
 
     if (!password) {
-      setError('Entschlüsselung abgebrochen.')
+      setError('Verschlüsselter Import abgebrochen.')
       return
     }
 
     const encryptedText = await file.text()
     const jsonText = await decryptText(encryptedText, password)
-    const parsed = JSON.parse(jsonText)
+    const incomingBackup = JSON.parse(jsonText)
 
-    console.log('ENTSCHLÜSSELTES BACKUP:')
-    console.log(parsed)
+    if (incomingBackup.type !== 'praxis-doku-change-backup') {
+      throw new Error('Diese Datei ist kein Änderungs-Backup.')
+    }
 
-    setSuccessMessage('Entschlüsselung erfolgreich. Das Backup wurde nur getestet, nicht importiert.')
-    window.alert('Entschlüsselung erfolgreich. Das Backup wurde nur getestet, nicht importiert.')
+    const currentBackup = await exportAllData()
+    const mergedBackup = mergeBackupData(currentBackup, incomingBackup)
+
+    await importAllDataReplace(mergedBackup)
+    await loadListData()
+
+    setSelectedPatient(null)
+    setSelectedPrescription(null)
+    setPrescriptions([])
+    setPatientDocuments([])
+    setDocEntries([])
+    setDocEntryImageCounts({})
+    setDocImages([])
+    setNav('patients')
+    setView('list')
+
+    const importedMaxModifiedAt = getBackupMaxModifiedAt(incomingBackup)
+    if (importedMaxModifiedAt) markDataChanged(importedMaxModifiedAt)
+
+    const changeCount = BACKUP_ARRAY_KEYS.reduce((sum, key) => sum + (incomingBackup[key]?.length || 0), 0)
+    setSuccessMessage(`Verschlüsseltes Änderungs-Backup importiert: ${changeCount} Einträge geprüft/übernommen.`)
   } catch (e) {
-    setError('Passwort falsch oder verschlüsselte Datei beschädigt.')
-    window.alert('Passwort falsch oder verschlüsselte Datei beschädigt.')
+    setError(`Verschlüsselter Import fehlgeschlagen: ${e.message}`)
   }
 }
+
+
+
+
+
+
+
 
 
   async function handleImportFile(event) {
@@ -657,6 +791,8 @@ async function handleTestDecryptFile(event) {
       setDocImages([])
       setNav('patients')
       setView('list')
+      const importedMaxModifiedAt = getBackupMaxModifiedAt(parsed)
+      if (importedMaxModifiedAt) markDataChanged(importedMaxModifiedAt)
       setSuccessMessage('Backup erfolgreich importiert. Lokale Daten wurden ersetzt.')
     } catch (e) {
       setError(`Import fehlgeschlagen: ${e.message}`)
@@ -673,11 +809,12 @@ async function handleTestDecryptFile(event) {
         throw new Error('Bitte Name, Vorname und Geburtsdatum ausfüllen.')
       }
 
-      const saved = await savePatient({
+      const changedAt = markDataChanged()
+      const saved = await savePatient(stampForSave({
         ...patientForm,
         lastName: patientForm.lastName.trim(),
         firstName: patientForm.firstName.trim(),
-      })
+      }, changedAt))
 
       await markPatientAsRecentlyOpened(saved.id)
       await loadListData()
@@ -703,11 +840,12 @@ async function handleTestDecryptFile(event) {
         throw new Error('Bitte Ausstellungsdatum und Heilmittel ausfüllen.')
       }
 
-      await savePrescription({
+      const changedAt = markDataChanged()
+      await savePrescription(stampForSave({
         ...prescriptionForm,
         patientId: selectedPatient.id,
         remedy: prescriptionForm.remedy.trim(),
-      })
+      }, changedAt))
 
       const updatedPrescriptions = await getPrescriptionsByPatientId(selectedPatient.id)
       setPrescriptions(updatedPrescriptions)
@@ -737,13 +875,14 @@ async function handleTestDecryptFile(event) {
     try {
       if (!docForm.entryDate || !docForm.text.trim()) throw new Error('Bitte Datum und Text ausfüllen.')
 
-      const saved = await saveDocEntry({
+      const changedAt = markDataChanged()
+      const saved = await saveDocEntry(stampForSave({
         ...docForm,
         prescriptionId: selectedPrescription.id,
         text: docForm.text.trim(),
-      })
+      }, changedAt))
 
-      await saveDocEntryImages(saved.id, docImages)
+      await saveDocEntryImages(saved.id, docImages.map(image => stampForSave(image, changedAt)))
 
       const updatedEntries = await getDocEntriesByPrescriptionId(selectedPrescription.id)
       const counts = await getDocEntryImageCountMap(updatedEntries.map(entry => entry.id))
@@ -768,12 +907,13 @@ async function handleTestDecryptFile(event) {
       if (!libraryForm.title.trim()) throw new Error('Bitte eine kurze Überschrift eintragen.')
       if (!libraryForm.file) throw new Error('Bitte eine Datei auswählen.')
 
-      await saveLibraryItem({
+      const changedAt = markDataChanged()
+      await saveLibraryItem(stampForSave({
         ...libraryForm,
         category: libraryCategory,
         title: libraryForm.title.trim(),
         note: libraryForm.note.trim(),
-      })
+      }, changedAt))
 
       await loadLibraryItems(libraryCategory)
       setSuccessMessage('Datei wurde gespeichert.')
@@ -796,12 +936,13 @@ async function handleTestDecryptFile(event) {
       if (!patientDocumentForm.title.trim()) throw new Error('Bitte eine kurze Überschrift eintragen.')
       if (!patientDocumentForm.file) throw new Error('Bitte eine Datei auswählen.')
 
-      await savePatientDocument({
+      const changedAt = markDataChanged()
+      await savePatientDocument(stampForSave({
         ...patientDocumentForm,
         patientId: selectedPatient.id,
         title: patientDocumentForm.title.trim(),
         note: patientDocumentForm.note.trim(),
-      })
+      }, changedAt))
 
       await reloadPatientDocuments(selectedPatient.id)
       setView('patientDetail')
@@ -1007,7 +1148,7 @@ function openStoredFile(file) {
                   setNav(key)
                   setSuccessMessage('')
                   if (key === 'patients') setView('list')
-                  if (key === 'backup') setView('list')
+                  if (key === 'backup') setView('backup')
                   if (key === 'library') setView('libraryHome')
                   if (key === 'exercises') setView('list')
                   if (key === 'settings') setView('list')
@@ -1106,6 +1247,42 @@ function openStoredFile(file) {
 
               <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
             </section>}
+
+            {nav === 'backup' && view === 'backup' && (
+              <section className="surface-card stack-lg">
+                <h2 className="section-title">Backup</h2>
+                <p className="muted">
+                  Hier liegt das vollständige Rettungsboot: ZIP-Backup exportieren oder komplett wieder einspielen.
+                </p>
+
+                <div className="backup-card">
+                  <h3>Komplettes ZIP-Backup</h3>
+                  <p>
+                    Exportiert alle lokalen Daten vollständig: Patienten, Verordnungen, Doku, Bilder, Dokumente/Befunde und Bibliothek.
+                  </p>
+
+                  <div className="stack-sm">
+                    <button className="btn btn-secondary" onClick={handleExportBackup}>
+                      ZIP-Backup exportieren
+                    </button>
+
+                    <button className="btn btn-ghost" onClick={() => importInputRef.current?.click()}>
+                      ZIP-Backup importieren
+                    </button>
+
+                    <input
+                      ref={importInputRef}
+                      type="file"
+                      accept=".json,.zip,application/json,application/zip"
+                      className="hidden"
+                      onChange={handleImportFile}
+                    />
+                  </div>
+                </div>
+
+                <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
+              </section>
+            )}
 
             {nav === 'library' && view === 'libraryHome' && (
               <section className="surface-card stack-lg">
@@ -1222,7 +1399,7 @@ function openStoredFile(file) {
               </section>
             )}
 
-            {(nav === 'patients' || nav === 'backup') && view === 'list' && (
+            {nav === 'patients' && view === 'list' && (
               <section className="list-layout">
                 <article className="surface-card">
                   <h2 className="section-title">Patientenliste</h2>
@@ -1286,57 +1463,33 @@ function openStoredFile(file) {
                   <div className="backup-card">
                     <h3>Datensicherung</h3>
                     <p>
-                      {isOwner
-                        ? 'Alle lokalen Daten als ZIP mit backup.json.'
-                        : 'Überträgt später nur neue Patienten, Verordnungen und Doku-Einträge an die Praxisleitung.'}
+                      Verschlüsseltes Änderungs-Backup für den Alltag. Exportiert nur neue oder geänderte Einträge seit dem letzten Änderungs-Export.
+                    </p>
+
+                    <p className="muted">
+                      Letzte Änderung: <strong>{formatDateTime(lastModifiedAt)}</strong>
+                    </p>
+
+                    <p className="muted">
+                      Letzter Änderungs-Export: <strong>{formatDateTime(lastEncryptedExportAt)}</strong>
                     </p>
 
                     <div className="stack-sm">
-                      {isOwner ? (
-                        <>
-                          <button className="btn btn-secondary" onClick={handleExportBackup}>
-                            Backup exportieren
-                          </button>
+                      <button className="btn btn-secondary" onClick={handleExportEncryptedBackup}>
+                        🔐 Verschlüsseltes Änderungs-Backup exportieren
+                      </button>
 
-                          <button className="btn btn-secondary" onClick={handleExportEncryptedBackup}>
-                            🔐 Verschlüsseltes Backup exportieren
-                          </button>
+                      <button className="btn btn-ghost" onClick={() => changeImportRef.current?.click()}>
+                        🔓 Verschlüsseltes Änderungs-Backup importieren
+                      </button>
 
-                          <button className="btn btn-ghost" onClick={() => encryptedImportRef.current?.click()}>
-                            🔓 Verschlüsseltes Backup testen
-                          </button>
-
-                          <input
-                            ref={encryptedImportRef}
-                            type="file"
-                            accept=".enc"
-                            className="hidden"
-                            onChange={handleTestDecryptFile}
-                          />
-
-                          <button className="btn btn-ghost" onClick={() => importInputRef.current?.click()}>
-                            Backup importieren
-                          </button>
-
-                          <input
-                            ref={importInputRef}
-                            type="file"
-                            accept=".json,.zip,application/json,application/zip"
-                            className="hidden"
-                            onChange={handleImportFile}
-                          />
-                        </>
-                      ) : (
-                        <>
-                          <button className="btn btn-secondary" onClick={handleStaffExportChanges}>
-                            Backup exportieren
-                          </button>
-
-                          <p className="muted">
-                            Mitarbeiter-Modus: Dieser Button wird in der nächsten Stufe die eigenen Änderungen verschlüsselt übertragen.
-                          </p>
-                        </>
-                      )}
+                      <input
+                        ref={changeImportRef}
+                        type="file"
+                        accept=".enc"
+                        className="hidden"
+                        onChange={handleImportEncryptedChanges}
+                      />
                     </div>
                   </div>
                 </article>
