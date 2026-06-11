@@ -51,7 +51,7 @@ const USER_ROLE_LABELS = {
 
 const LAST_MODIFIED_STORAGE_KEY = 'pwaLastModifiedAt'
 const LAST_ENCRYPTED_EXPORT_STORAGE_KEY = 'pwaLastEncryptedExportAt'
-const ENCRYPTION_ITERATIONS = 1
+const ENCRYPTION_ITERATIONS = 100000
 
 const BACKUP_ARRAY_KEYS = [
   'patients',
@@ -414,6 +414,7 @@ export default function App() {
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
   const changeImportRef = useRef(null)
+  const changeZipImportRef = useRef(null)
   const [userRole, setUserRole] = useState(() => window.localStorage.getItem('pwaUserRole') || USER_ROLES.OWNER)
   const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
   const [lastModifiedAt, setLastModifiedAt] = useState(() => readStoredTimestamp(LAST_MODIFIED_STORAGE_KEY))
@@ -772,6 +773,89 @@ async function handleImportEncryptedChanges(event) {
     setSuccessMessage(`Verschlüsseltes Änderungs-Backup importiert: ${changeCount} Einträge geprüft/übernommen.`)
   } catch (e) {
     setError(`Verschlüsselter Import fehlgeschlagen: ${e.message}`)
+  }
+}
+
+
+async function handleExportChangeZip() {
+  setError('')
+  setSuccessMessage('')
+
+  try {
+    const fullBackup = await exportAllData()
+    const changeBackup = createChangeBackup(fullBackup, lastEncryptedExportAt)
+    const changeCount = BACKUP_ARRAY_KEYS.reduce((sum, key) => sum + (changeBackup[key]?.length || 0), 0)
+
+    if (changeCount === 0) {
+      setSuccessMessage('Keine neuen Änderungen seit dem letzten Änderungs-Export.')
+      return
+    }
+
+    const json = JSON.stringify(changeBackup, null, 2)
+    const zipBlob = createZipWithBackupJson(json)
+    const date = new Date().toISOString().slice(0, 10)
+    const url = URL.createObjectURL(zipBlob)
+    const link = document.createElement('a')
+
+    link.href = url
+    link.download = `praxis-aenderungen-${date}.zip`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000)
+
+    const exportedAt = changeBackup.exportedAt || getNowIso()
+    writeStoredTimestamp(LAST_ENCRYPTED_EXPORT_STORAGE_KEY, exportedAt)
+    setLastEncryptedExportAt(exportedAt)
+
+    setSuccessMessage(`ZIP-Änderungs-Backup exportiert: ${changeCount} geänderte Einträge.`)
+  } catch (e) {
+    setError(`ZIP-Änderungs-Export fehlgeschlagen: ${e.message}`)
+  }
+}
+
+async function handleImportChangeZip(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+
+  if (!file) return
+
+  setError('')
+  setSuccessMessage('')
+
+  try {
+    const isZip = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip'
+    const text = isZip ? await readBackupJsonFromZip(file) : await file.text()
+    const incomingBackup = JSON.parse(text)
+
+    if (incomingBackup.type !== 'praxis-doku-change-backup') {
+      throw new Error('Diese Datei ist kein Änderungs-Backup.')
+    }
+
+    const currentBackup = await exportAllData()
+    const mergedBackup = mergeBackupData(currentBackup, incomingBackup)
+
+    await importAllDataReplace(mergedBackup)
+    await loadListData()
+
+    setSelectedPatient(null)
+    setSelectedPrescription(null)
+    setPrescriptions([])
+    setPatientDocuments([])
+    setDocEntries([])
+    setDocEntryImageCounts({})
+    setDocImages([])
+    setNav('patients')
+    setView('list')
+
+    const importedMaxModifiedAt = getBackupMaxModifiedAt(incomingBackup)
+    if (importedMaxModifiedAt) markDataChanged(importedMaxModifiedAt)
+
+    const changeCount = BACKUP_ARRAY_KEYS.reduce((sum, key) => sum + (incomingBackup[key]?.length || 0), 0)
+    setSuccessMessage(`ZIP-Änderungs-Backup importiert: ${changeCount} Einträge geprüft/übernommen.`)
+  } catch (e) {
+    setError(`ZIP-Änderungs-Import fehlgeschlagen: ${e.message}`)
   }
 }
 
@@ -1297,6 +1381,39 @@ function openStoredFile(file) {
                   </div>
                 </div>
 
+                <div className="backup-card">
+                  <h3>ZIP-Änderungs-Backup</h3>
+                  <p>
+                    Tablet-freundlicher Änderungs-Export ohne Verschlüsselung. Exportiert nur neue oder geänderte Einträge seit dem letzten Änderungs-Export.
+                  </p>
+
+                  <p className="muted">
+                    Letzte Änderung: <strong>{formatDateTime(lastModifiedAt)}</strong>
+                  </p>
+
+                  <p className="muted">
+                    Letzter Änderungs-Export: <strong>{formatDateTime(lastEncryptedExportAt)}</strong>
+                  </p>
+
+                  <div className="stack-sm">
+                    <button className="btn btn-secondary" onClick={handleExportChangeZip}>
+                      ZIP-Änderungen exportieren
+                    </button>
+
+                    <button className="btn btn-ghost" onClick={() => changeZipImportRef.current?.click()}>
+                      ZIP-Änderungen importieren
+                    </button>
+
+                    <input
+                      ref={changeZipImportRef}
+                      type="file"
+                      accept=".json,.zip,application/json,application/zip"
+                      className="hidden"
+                      onChange={handleImportChangeZip}
+                    />
+                  </div>
+                </div>
+
                 <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
               </section>
             )}
@@ -1480,34 +1597,16 @@ function openStoredFile(file) {
                   <div className="backup-card">
                     <h3>Datensicherung</h3>
                     <p>
-                      Verschlüsseltes Änderungs-Backup für den Alltag. Exportiert nur neue oder geänderte Einträge seit dem letzten Änderungs-Export.
+                      Backups und Änderungs-Exporte findest du jetzt gesammelt im Menüpunkt Backup.
                     </p>
 
                     <p className="muted">
                       Letzte Änderung: <strong>{formatDateTime(lastModifiedAt)}</strong>
                     </p>
 
-                    <p className="muted">
-                      Letzter Änderungs-Export: <strong>{formatDateTime(lastEncryptedExportAt)}</strong>
-                    </p>
-
-                    <div className="stack-sm">
-                      <button className="btn btn-secondary" onClick={handleExportEncryptedBackup}>
-                        🔐 Verschlüsseltes Änderungs-Backup exportieren
-                      </button>
-
-                      <button className="btn btn-ghost" onClick={() => changeImportRef.current?.click()}>
-                        🔓 Verschlüsseltes Änderungs-Backup importieren
-                      </button>
-
-                      <input
-                        ref={changeImportRef}
-                        type="file"
-                        accept=".enc"
-                        className="hidden"
-                        onChange={handleImportEncryptedChanges}
-                      />
-                    </div>
+                    <button className="btn btn-ghost" onClick={() => { setNav('backup'); setView('backup') }}>
+                      Zum Backup-Bereich
+                    </button>
                   </div>
                 </article>
               </section>
