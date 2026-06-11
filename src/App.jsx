@@ -51,6 +51,7 @@ const USER_ROLE_LABELS = {
 
 const LAST_MODIFIED_STORAGE_KEY = 'pwaLastModifiedAt'
 const LAST_ENCRYPTED_EXPORT_STORAGE_KEY = 'pwaLastEncryptedExportAt'
+const ENCRYPTION_ITERATIONS = 100000
 
 const BACKUP_ARRAY_KEYS = [
   'patients',
@@ -564,8 +565,12 @@ function base64ToArrayBuffer(base64) {
   return bytes.buffer
 }
 
-async function createEncryptionKey(password, salt) {
+async function createEncryptionKey(password, salt, iterations = ENCRYPTION_ITERATIONS) {
   const encoder = new TextEncoder()
+
+  if (!window.crypto?.subtle) {
+    throw new Error('Dieser Browser unterstützt die benötigte Verschlüsselung nicht.')
+  }
 
   const keyMaterial = await window.crypto.subtle.importKey(
     'raw',
@@ -579,7 +584,7 @@ async function createEncryptionKey(password, salt) {
     {
       name: 'PBKDF2',
       salt,
-      iterations: 250000,
+      iterations,
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -596,13 +601,10 @@ async function encryptText(text, password) {
   const encoder = new TextEncoder()
   const salt = window.crypto.getRandomValues(new Uint8Array(16))
   const iv = window.crypto.getRandomValues(new Uint8Array(12))
-  const key = await createEncryptionKey(password, salt)
+  const key = await createEncryptionKey(password, salt, ENCRYPTION_ITERATIONS)
 
   const encryptedBuffer = await window.crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv
-    },
+    { name: 'AES-GCM', iv },
     key,
     encoder.encode(text)
   )
@@ -611,7 +613,7 @@ async function encryptText(text, password) {
     version: 1,
     algorithm: 'AES-GCM',
     kdf: 'PBKDF2-SHA256',
-    iterations: 250000,
+    iterations: ENCRYPTION_ITERATIONS,
     salt: arrayBufferToBase64(salt),
     iv: arrayBufferToBase64(iv),
     data: arrayBufferToBase64(encryptedBuffer)
@@ -625,13 +627,14 @@ async function decryptText(encryptedText, password) {
   const iv = new Uint8Array(base64ToArrayBuffer(payload.iv))
   const encryptedBuffer = base64ToArrayBuffer(payload.data)
 
-  const key = await createEncryptionKey(password, salt)
+  const key = await createEncryptionKey(
+    password,
+    salt,
+    payload.iterations || 250000
+  )
 
   const decryptedBuffer = await window.crypto.subtle.decrypt(
-    {
-      name: 'AES-GCM',
-      iv
-    },
+    { name: 'AES-GCM', iv },
     key,
     encryptedBuffer
   )
@@ -680,6 +683,8 @@ async function handleExportEncryptedBackup() {
       return
     }
 
+    setSuccessMessage('Verschlüsseltes Backup wird vorbereitet... bitte kurz warten.')
+
     const json = JSON.stringify(changeBackup)
     const encryptedText = await encryptText(json, password)
 
@@ -693,17 +698,29 @@ async function handleExportEncryptedBackup() {
 
     link.href = url
     link.download = `praxis-aenderungen-${date}.enc`
+    document.body.appendChild(link)
     link.click()
+    link.remove()
 
-    URL.revokeObjectURL(url)
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000)
 
-    const exportedAt = changeBackup.exportedAt || getNowIso()
-    writeStoredTimestamp(LAST_ENCRYPTED_EXPORT_STORAGE_KEY, exportedAt)
-    setLastEncryptedExportAt(exportedAt)
+    const confirmed = window.confirm(
+      'Wurde die verschlüsselte Backup-Datei erfolgreich gespeichert?'
+    )
 
-    setSuccessMessage(`Verschlüsseltes Änderungs-Backup exportiert: ${changeCount} geänderte Einträge.`)
+    if (confirmed) {
+      const exportedAt = changeBackup.exportedAt || getNowIso()
+      writeStoredTimestamp(LAST_ENCRYPTED_EXPORT_STORAGE_KEY, exportedAt)
+      setLastEncryptedExportAt(exportedAt)
+
+      setSuccessMessage(`Verschlüsseltes Änderungs-Backup exportiert: ${changeCount} geänderte Einträge.`)
+    } else {
+      setSuccessMessage(
+        'Export wurde nicht als erledigt markiert. Du kannst den verschlüsselten Export erneut versuchen.'
+      )
+    }
   } catch (e) {
-    setError(e.message)
+    setError(`Verschlüsselter Export fehlgeschlagen: ${e.message}`)
   }
 }
 
