@@ -56,11 +56,11 @@ const ENCRYPTION_ITERATIONS = 100000
 const BACKUP_ARRAY_KEYS = [
   'patients',
   'prescriptions',
-  'docEntries',
-  'docEntryImages',
+  'documentationEntries',
+  'images',
   'patientDocuments',
   'libraryItems',
-  'recentPatients',
+  'recentlyOpened',
 ]
 
 const getNowIso = () => new Date().toISOString()
@@ -134,8 +134,8 @@ function mergeBackupData(currentBackup, incomingBackup) {
 }
 
 function createChangeBackup(fullBackup, changedAfter) {
-  const changedDocEntryIds = new Set(
-    (fullBackup.docEntries || [])
+  const changedDocumentationEntryIds = new Set(
+    (fullBackup.documentationEntries || [])
       .filter(item => isChangedAfter(item, changedAfter))
       .map(item => item.id)
   )
@@ -147,13 +147,13 @@ function createChangeBackup(fullBackup, changedAfter) {
     changedAfter: changedAfter || '',
     patients: (fullBackup.patients || []).filter(item => isChangedAfter(item, changedAfter)),
     prescriptions: (fullBackup.prescriptions || []).filter(item => isChangedAfter(item, changedAfter)),
-    docEntries: (fullBackup.docEntries || []).filter(item => isChangedAfter(item, changedAfter)),
-    docEntryImages: (fullBackup.docEntryImages || []).filter(item =>
-      isChangedAfter(item, changedAfter) || changedDocEntryIds.has(item.docEntryId)
+    documentationEntries: (fullBackup.documentationEntries || []).filter(item => isChangedAfter(item, changedAfter)),
+    images: (fullBackup.images || []).filter(item =>
+      isChangedAfter(item, changedAfter) || changedDocumentationEntryIds.has(item.docEntryId)
     ),
     patientDocuments: (fullBackup.patientDocuments || []).filter(item => isChangedAfter(item, changedAfter)),
     libraryItems: (fullBackup.libraryItems || []).filter(item => isChangedAfter(item, changedAfter)),
-    recentPatients: (fullBackup.recentPatients || []).filter(item => isChangedAfter(item, changedAfter)),
+    recentlyOpened: (fullBackup.recentlyOpened || []).filter(item => isChangedAfter(item, changedAfter)),
   }
 }
 
