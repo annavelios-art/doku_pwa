@@ -11,6 +11,7 @@ import {
   savePatient, savePatientDocument, savePrescription,
 } from './lib/patientsDb'
 import './App.css'
+import DocumentationEditor from './components/DocumentationEditor'
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
 const EMPTY_PRESCRIPTION_FORM = { id: '', issueDate: '', remedy: '', createdAt: '' }
@@ -56,11 +57,11 @@ const ENCRYPTION_ITERATIONS = 100000
 const BACKUP_ARRAY_KEYS = [
   'patients',
   'prescriptions',
-  'documentationEntries',
-  'images',
+  'docEntries',
+  'docEntryImages',
   'patientDocuments',
   'libraryItems',
-  'recentlyOpened',
+  'recentPatients',
 ]
 
 const getNowIso = () => new Date().toISOString()
@@ -134,8 +135,8 @@ function mergeBackupData(currentBackup, incomingBackup) {
 }
 
 function createChangeBackup(fullBackup, changedAfter) {
-  const changedDocumentationEntryIds = new Set(
-    (fullBackup.documentationEntries || [])
+  const changedDocEntryIds = new Set(
+    (fullBackup.docEntries || [])
       .filter(item => isChangedAfter(item, changedAfter))
       .map(item => item.id)
   )
@@ -147,13 +148,13 @@ function createChangeBackup(fullBackup, changedAfter) {
     changedAfter: changedAfter || '',
     patients: (fullBackup.patients || []).filter(item => isChangedAfter(item, changedAfter)),
     prescriptions: (fullBackup.prescriptions || []).filter(item => isChangedAfter(item, changedAfter)),
-    documentationEntries: (fullBackup.documentationEntries || []).filter(item => isChangedAfter(item, changedAfter)),
-    images: (fullBackup.images || []).filter(item =>
-      isChangedAfter(item, changedAfter) || changedDocumentationEntryIds.has(item.docEntryId)
+    docEntries: (fullBackup.docEntries || []).filter(item => isChangedAfter(item, changedAfter)),
+    docEntryImages: (fullBackup.docEntryImages || []).filter(item =>
+      isChangedAfter(item, changedAfter) || changedDocEntryIds.has(item.docEntryId)
     ),
     patientDocuments: (fullBackup.patientDocuments || []).filter(item => isChangedAfter(item, changedAfter)),
     libraryItems: (fullBackup.libraryItems || []).filter(item => isChangedAfter(item, changedAfter)),
-    recentlyOpened: (fullBackup.recentlyOpened || []).filter(item => isChangedAfter(item, changedAfter)),
+    recentPatients: (fullBackup.recentPatients || []).filter(item => isChangedAfter(item, changedAfter)),
   }
 }
 
@@ -1939,79 +1940,25 @@ function openStoredFile(file) {
               </section>
             )}
 
-            {view === 'docEdit' && selectedPrescription && (
-              <section className="surface-card card-doc-edit">
-                <form className="stack-lg" onSubmit={handleSaveDocEntry}>
-                  <button type="button" className="btn btn-ghost-inline" onClick={() => setView('prescriptionDetail')}>
-                    <ArrowLeft size={16} />
-                    Abbrechen
-                  </button>
+           {view === 'docEdit' && selectedPrescription && (
+  <DocumentationEditor
+    docForm={docForm}
+    setDocForm={setDocForm}
+    docTextareaRef={docTextareaRef}
+    handleSaveDocEntry={handleSaveDocEntry}
+    setView={setView}
+    toolbarInserts={TOOLBAR_INSERTS}
+    insertSymbolText={insertSymbolText}
+    isOwner={isOwner}
+    docImages={docImages}
+    handleImageUpload={handleImageUpload}
+    setFullscreenImage={setFullscreenImage}
+    handleRemoveImage={handleRemoveImage}
+    saving={saving}
+  />
+)}
 
-                  <input
-                    type="date"
-                    className="field"
-                    value={docForm.entryDate}
-                    onChange={event => setDocForm(prev => ({ ...prev, entryDate: event.target.value }))}
-                  />
 
-                  <div className="toolbar-box">
-                    <p className="toolbar-title">Schreibstütze</p>
-
-                    <div className="toolbar-row">
-                      {TOOLBAR_INSERTS.map(item => (
-                        <button
-                          key={item.label}
-                          type="button"
-                          onClick={() => insertSymbolText(item.insert)}
-                          className="pill-btn"
-                        >
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <textarea
-                    ref={docTextareaRef}
-                    className="field textfield"
-                    value={docForm.text}
-                    onChange={event => setDocForm(prev => ({ ...prev, text: event.target.value }))}
-                  />
-
-                  {isOwner ? (
-                    <div className="image-grid">
-                      <label className="upload-card">
-                        <span><Plus className="upload-plus" />Bild hinzufügen</span>
-                        <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
-                      </label>
-
-                      {docImages.map(image => (
-                        <div key={image.id} className="image-card">
-                          <img
-                            src={image.dataUrl}
-                            alt={image.fileName}
-                            className="image-preview"
-                            onClick={() => setFullscreenImage(image.dataUrl)}
-                          />
-                          <p className="image-name">{image.fileName}</p>
-                          <button type="button" className="btn btn-danger" onClick={() => handleRemoveImage(image.id)}>Bild entfernen</button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="muted">Bild-Upload ist im Mitarbeiter-Modus deaktiviert.</p>
-                  )}
-
-                  <div className="row-end">
-                    <button type="button" className="btn btn-ghost" onClick={() => setView('prescriptionDetail')}>Abbrechen</button>
-                    <button className="btn btn-primary" disabled={saving}>
-                      <Save size={16} />
-                      {saving ? 'Speichern...' : 'Speichern'}
-                    </button>
-                  </div>
-                </form>
-              </section>
-            )}
           </main>
         </section>
       </div>
