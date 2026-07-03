@@ -26,48 +26,49 @@ export default function DictationButton({ onTextReady }) {
   const chunksRef = useRef([])
 
   async function transcribeAudio(audioBlob) {
-    setStatus('processing')
-    setInfo('Sprachmodell wird geladen / Sprache wird erkannt...')
+  setStatus('processing')
+  setInfo('Sprachmodell wird geladen / Sprache wird erkannt...')
 
-    const audioUrl = URL.createObjectURL(audioBlob)
+  await new Promise(resolve => window.setTimeout(resolve, 500))
 
-    try {
-      const transcriber = await getTranscriber()
+  const audioUrl = URL.createObjectURL(audioBlob)
 
-      const result = await transcriber(audioUrl, {
-        language: 'de',
-        task: 'transcribe',
-      })
+  try {
+    const transcriber = await getTranscriber()
 
-      console.log('Whisper-Ergebnis:', result)
+    setInfo('Audio wird ausgewertet...')
 
-     const text = result?.text?.trim() || ''
+    const result = await transcriber(audioUrl, {
+      language: 'de',
+      task: 'transcribe',
+    })
 
-console.log('Erkannter Text:', text)
+    console.log('Whisper-Ergebnis:', result)
 
-if (!text) {
-  setInfo('Kein Text erkannt. Bitte kürzer/lauter testen.')
-  setStatus('idle')
-  return
-}
+    const text = result?.text?.trim() || ''
 
-setInfo(`Erkannt: ${text}`)
-
-      onTextReady?.(text)
-
-      setStatus('done')
-
-      window.setTimeout(() => {
-        setStatus('idle')
-      }, 1500)
-    } catch (error) {
-      console.error(error)
+    if (!text) {
       setStatus('idle')
-      setInfo(`Spracherkennung fehlgeschlagen: ${error.message}`)
-    } finally {
-      URL.revokeObjectURL(audioUrl)
+      setInfo('Kein Text erkannt. Bitte einmal sehr deutlich und kurz testen.')
+      return
     }
+
+    setInfo(`Erkannt: ${text}`)
+    onTextReady?.(text)
+
+    setStatus('done')
+
+    window.setTimeout(() => {
+      setStatus('idle')
+    }, 1500)
+  } catch (error) {
+    console.error('Whisper-Fehler:', error)
+    setStatus('idle')
+    setInfo(`Spracherkennung fehlgeschlagen: ${error.message || String(error)}`)
+  } finally {
+    URL.revokeObjectURL(audioUrl)
   }
+}
 
   async function startRecording() {
     setInfo('')
