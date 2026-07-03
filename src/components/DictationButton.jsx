@@ -41,8 +41,17 @@ export default function DictationButton({ onTextReady }) {
 
       console.log('Whisper-Ergebnis:', result)
 
-      const text = result?.text || ''
-      setInfo(text ? `Erkannt: ${text}` : 'Kein Text erkannt.')
+     const text = result?.text?.trim() || ''
+
+console.log('Erkannter Text:', text)
+
+if (!text) {
+  setInfo('Kein Text erkannt. Bitte kürzer/lauter testen.')
+  setStatus('idle')
+  return
+}
+
+setInfo(`Erkannt: ${text}`)
 
       onTextReady?.(text)
 
