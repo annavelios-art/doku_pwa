@@ -7,6 +7,9 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+workbox: {
+  maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
+},
       manifest: {
         name: 'Behandlungsdokumentation',
         short_name: 'Doku',
