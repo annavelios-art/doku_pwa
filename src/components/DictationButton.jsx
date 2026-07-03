@@ -1,59 +1,88 @@
 import { useRef, useState } from 'react'
+import { pipeline } from '@huggingface/transformers'
+
+let transcriberPromise = null
+
+function getTranscriber() {
+  if (!transcriberPromise) {
+    transcriberPromise = pipeline(
+      'automatic-speech-recognition',
+      'onnx-community/whisper-tiny',
+      {
+        device: 'wasm',
+        dtype: 'fp32',
+      }
+    )
+  }
+
+  return transcriberPromise
+}
 
 export default function DictationButton({ onTextReady }) {
   const [status, setStatus] = useState('idle')
   const [info, setInfo] = useState('')
 
   const mediaRecorderRef = useRef(null)
-  const streamRef = useRef(null)
   const chunksRef = useRef([])
+
+  async function transcribeAudio(audioBlob) {
+    setStatus('processing')
+    setInfo('Sprachmodell wird geladen / Sprache wird erkannt...')
+
+    const audioUrl = URL.createObjectURL(audioBlob)
+
+    try {
+      const transcriber = await getTranscriber()
+
+      const result = await transcriber(audioUrl, {
+        language: 'de',
+        task: 'transcribe',
+      })
+
+      console.log('Whisper-Ergebnis:', result)
+
+      const text = result?.text || ''
+      setInfo(text ? `Erkannt: ${text}` : 'Kein Text erkannt.')
+
+      onTextReady?.(text)
+
+      setStatus('done')
+
+      window.setTimeout(() => {
+        setStatus('idle')
+      }, 1500)
+    } catch (error) {
+      console.error(error)
+      setStatus('idle')
+      setInfo(`Spracherkennung fehlgeschlagen: ${error.message}`)
+    } finally {
+      URL.revokeObjectURL(audioUrl)
+    }
+  }
 
   async function startRecording() {
     setInfo('')
 
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setInfo('Mikrofon wird von diesem Browser nicht unterstützt.')
-      return
-    }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-
-      streamRef.current = stream
       chunksRef.current = []
 
       const recorder = new MediaRecorder(stream)
 
       recorder.ondataavailable = event => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data)
-        }
+        if (event.data.size > 0) chunksRef.current.push(event.data)
       }
 
       recorder.onstop = () => {
+        stream.getTracks().forEach(track => track.stop())
+
         const audioBlob = new Blob(chunksRef.current, {
           type: recorder.mimeType || 'audio/webm',
         })
 
-        console.log('Audio aufgenommen:', {
-          type: audioBlob.type,
-          size: audioBlob.size,
-        })
+        console.log('Audio aufgenommen:', audioBlob)
 
-        stream.getTracks().forEach(track => track.stop())
-
-        setStatus('processing')
-        setInfo(`Audio aufgenommen: ${Math.round(audioBlob.size / 1024)} kB`)
-
-        window.setTimeout(() => {
-          onTextReady?.('')
-          setStatus('done')
-
-          window.setTimeout(() => {
-            setStatus('idle')
-            setInfo('')
-          }, 1000)
-        }, 800)
+        transcribeAudio(audioBlob)
       }
 
       mediaRecorderRef.current = recorder
@@ -68,28 +97,19 @@ export default function DictationButton({ onTextReady }) {
 
   function stopRecording() {
     const recorder = mediaRecorderRef.current
-
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.stop()
-    }
+    if (recorder && recorder.state !== 'inactive') recorder.stop()
   }
 
   function handleClick() {
-    if (status === 'idle') {
-      startRecording()
-      return
-    }
-
-    if (status === 'recording') {
-      stopRecording()
-    }
+    if (status === 'idle') startRecording()
+    if (status === 'recording') stopRecording()
   }
 
   const labelMap = {
     idle: '🎤 Diktieren',
     recording: '🔴 Aufnahme läuft...',
-    processing: '⏳ Aufnahme wird vorbereitet...',
-    done: '✅ Aufnahme beendet',
+    processing: '⏳ Sprache wird erkannt...',
+    done: '✅ Text übernommen',
   }
 
   return (
