@@ -1,3 +1,4 @@
+import DictationButton from './DictationButton'
 import { ArrowLeft, Plus, Save } from 'lucide-react'
 
 export default function DocumentationEditor({
@@ -46,6 +47,12 @@ export default function DocumentationEditor({
             ))}
           </div>
         </div>
+
+
+<DictationButton
+    onTextReady={() => {}}
+/>
+
 
         <textarea
           ref={docTextareaRef}
