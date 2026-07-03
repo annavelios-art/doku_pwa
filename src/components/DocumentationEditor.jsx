@@ -50,7 +50,17 @@ export default function DocumentationEditor({
 
 
 <DictationButton
-    onTextReady={() => {}}
+  onTextReady={text => {
+    if (!text?.trim()) return
+
+    setDocForm(prev => ({
+      ...prev,
+      text:
+        prev.text.trim().length === 0
+          ? text
+          : `${prev.text}\n\n${text}`,
+    }))
+  }}
 />
 
 
