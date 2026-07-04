@@ -14,6 +14,7 @@ import './App.css'
 import DocumentationEditor from './components/DocumentationEditor'
 import { loadModel } from './speech/speechService'
 
+
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
 const EMPTY_PRESCRIPTION_FORM = { id: '', issueDate: '', remedy: '', createdAt: '' }
 const EMPTY_DOC_FORM = { id: '', entryDate: '', text: '', createdAt: '' }

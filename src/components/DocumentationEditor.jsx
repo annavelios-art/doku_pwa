@@ -1,5 +1,10 @@
-import DictationButton from './DictationButton'
+import { useEffect, useState } from 'react'
 import { ArrowLeft, Plus, Save } from 'lucide-react'
+import {
+  postProcessText,
+  startDictation,
+  stopDictation,
+} from '../speech/speechService'
 
 export default function DocumentationEditor({
   docForm,
@@ -16,6 +21,71 @@ export default function DocumentationEditor({
   handleRemoveImage,
   saving,
 }) {
+  const [isDictating, setIsDictating] = useState(false)
+  const [dictationStatus, setDictationStatus] = useState('')
+
+  useEffect(() => {
+    return () => {
+      stopDictation()
+    }
+  }, [])
+
+  function focusTextareaEnd() {
+    window.setTimeout(() => {
+      const textarea = docTextareaRef.current
+      if (!textarea) return
+      textarea.focus()
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+    }, 0)
+  }
+
+  function appendDictationText(rawText) {
+    const cleaned = postProcessText(rawText)
+    if (!cleaned) return
+
+    setDocForm(prev => ({
+      ...prev,
+      text: prev.text.trim().length === 0 ? cleaned : `${prev.text}\n\n${cleaned}`,
+    }))
+
+    focusTextareaEnd()
+  }
+
+  async function toggleDictation() {
+    try {
+      if (isDictating) {
+        await stopDictation()
+        setIsDictating(false)
+        setDictationStatus('Diktat gestoppt.')
+        return
+      }
+
+      setDictationStatus('Sprachsystem wird vorbereitet...')
+
+      await startDictation({
+        onStatus(status) {
+          setDictationStatus(status)
+        },
+        onText(text) {
+          appendDictationText(text)
+          const cleaned = postProcessText(text)
+          if (cleaned) setDictationStatus(`Erkannt: ${cleaned}`)
+        },
+        onError(error) {
+          const message = error?.message || String(error)
+          setDictationStatus(message)
+          setIsDictating(false)
+        },
+      })
+
+      setIsDictating(true)
+    } catch (error) {
+      const message = error?.message || String(error)
+      setIsDictating(false)
+      setDictationStatus(`Diktieren fehlgeschlagen: ${message}`)
+    }
+  }
+
   return (
     <section className="surface-card card-doc-edit">
       <form className="stack-lg" onSubmit={handleSaveDocEntry}>
@@ -48,21 +118,17 @@ export default function DocumentationEditor({
           </div>
         </div>
 
+        <div className="stack-sm">
+          <button
+            type="button"
+            className={`btn ${isDictating ? 'btn-danger' : 'btn-secondary'}`}
+            onClick={toggleDictation}
+          >
+            🎤 {isDictating ? 'Diktat stoppen' : 'Diktieren testen'}
+          </button>
 
-<DictationButton
-  onTextReady={text => {
-    if (!text?.trim()) return
-
-    setDocForm(prev => ({
-      ...prev,
-      text:
-        prev.text.trim().length === 0
-          ? text
-          : `${prev.text}\n\n${text}`,
-    }))
-  }}
-/>
-
+          {dictationStatus && <p className="muted">{dictationStatus}</p>}
+        </div>
 
         <textarea
           ref={docTextareaRef}
@@ -98,7 +164,9 @@ export default function DocumentationEditor({
         )}
 
         <div className="row-end">
-          <button type="button" className="btn btn-ghost" onClick={() => setView('prescriptionDetail')}>Abbrechen</button>
+          <button type="button" className="btn btn-ghost" onClick={() => setView('prescriptionDetail')}>
+            Abbrechen
+          </button>
           <button className="btn btn-primary" disabled={saving}>
             <Save size={16} />
             {saving ? 'Speichern...' : 'Speichern'}
