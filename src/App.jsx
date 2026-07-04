@@ -12,6 +12,7 @@ import {
 } from './lib/patientsDb'
 import './App.css'
 import DocumentationEditor from './components/DocumentationEditor'
+import { loadModel } from './speech/speechService'
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
 const EMPTY_PRESCRIPTION_FORM = { id: '', issueDate: '', remedy: '', createdAt: '' }
@@ -1242,6 +1243,7 @@ function openStoredFile(file) {
               ['library', 'Bibliothek', Library],
               ['backup', 'Backup', CloudUpload],
               ['settings', 'Einstellungen', Settings],
+	      ['speech', 'Sprachmodell', FileText],
             ].map(([key, label, Icon]) => (
               <button
                 key={key}
@@ -1254,6 +1256,7 @@ function openStoredFile(file) {
                   if (key === 'library') setView('libraryHome')
                   if (key === 'exercises') setView('list')
                   if (key === 'settings') setView('list')
+		  if (key === 'speech') setView('speechModel')
                 }}
               >
                 <Icon size={16} />
@@ -1290,6 +1293,27 @@ function openStoredFile(file) {
               <p className="muted">Dieser Bereich wird später erweitert.</p>
               <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
             </section>}
+
+	  {nav === 'speech' && view === 'speechModel' && (
+  	  <section className="surface-card stack-lg">
+    	<h2 className="section-title">Sprachmodell</h2>
+    	<p className="muted">
+      Testbereich für Wörterbuch, typische Sätze und spätere Spracherkennung.
+    	</p>
+
+    <button
+      type="button"
+      className="btn btn-primary"
+      onClick={async () => {
+        await loadModel()
+        setSuccessMessage('Sprachmodell-Test erfolgreich.')
+        setError('')
+      }}
+    >
+      Sprachmodell testen
+    </button>
+  </section>
+)}
 
             {nav === 'settings' && <section className="surface-card stack-lg">
               <h2 className="section-title">Einstellungen</h2>

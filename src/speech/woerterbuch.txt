@@ -1,0 +1,132 @@
+=== Körperregionen ===
+Schulter
+Hüfte
+Knie
+Sprunggelenk
+HWS
+BWS
+LWS
+ISG
+Spinat Iliaca 
+Finger
+Daumen 
+Zeigefinger
+Mittelfinger
+Ringfinger 
+
+Zehen
+Großzeh
+Skapula
+Humeruskopf
+Radius
+Radiusköpfchen
+Rippen
+Sternoklavikular 
+Sternum
+Rippenbogen 
+Multifidi
+Becken 
+Beckenbogen 
+Tiefe Bauchmuskeln 
+Rotatorenmangette
+
+=== Bewegungen ===
+Flexion
+Extension
+Abduktion
+Adduktion
+Außenrotation
+Innenrotation
+Elevation 
+LateralFlexion
+Latflex
+LinksRotation 
+Rechtsrotation
+Stabilisatoren 
+Pronation 
+Supination 
+Spastik 
+
+=== Befunde ===
+Druckschmerz
+Muskelverspannung
+Hypertonus
+Hypotonus
+Eingeschränkte Beweglichkeit
+Freie Beweglichkeit
+Schmerz bei Endstellung
+Gangbild 
+Schmerzpunkt
+Einatmungsstellung 
+Schulter-Hochstand 
+Kopf protraktion 
+Abgeflacht
+Hyperlordose 
+Lws-Lordose 
+Bws-Kyphose 
+Fussgewölbe 
+Kontraktur
+Hartes Ende 
+Weiches Ende 
+
+=== Maßnahmen ===
+Manuelle Therapie
+Weichteilbehandlung
+Mobilisation
+Triggerpunktbehandlung
+Lymphdrainage
+Kräftigungsübungen
+Kräftigung 
+Aktivierung 
+Dehnübungen
+Eigenübungen erklärt
+Fazilitation 
+Relaxation 
+Dehnung
+Verkürzt 
+
+
+=== Negationen ===
+Kein
+Keine
+Keinerlei
+Nicht
+Ohne
+Unauffällig
+Frei
+Reizlos
+Schmerzfrei
+=== Richtungsangaben ===
+Rechts
+Links
+Beidseits
+Beidseitig
+Ventral
+Dorsal
+Medial
+Lateral
+Proximal
+Distal
+Caudal
+Kranial 
+
+=== Zahlen ===
+Null
+Eins
+Zwei
+Drei
+Vier
+Fünf
+Sechs
+Sieben
+Acht
+Neun
+Zehn
+
+15 Grad
+30 Grad
+45 Grad
+60 Grad
+90 Grad
+120 Grad
+180 Grad
