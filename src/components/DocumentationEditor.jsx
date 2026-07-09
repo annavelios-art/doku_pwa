@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Plus, Save } from 'lucide-react'
+import DateInput from './DateInput'
 import {
   postProcessText,
   startDictation,
@@ -94,12 +95,15 @@ export default function DocumentationEditor({
           Abbrechen
         </button>
 
-        <input
-          type="date"
-          className="field"
-          value={docForm.entryDate}
-          onChange={event => setDocForm(prev => ({ ...prev, entryDate: event.target.value }))}
-        />
+        <DateInput
+  		value={docForm.entryDate}
+  		onChange={value =>
+    		setDocForm(prev => ({
+      		...prev,
+      		entryDate: value,
+    		}))
+  		}
+	/>
 
         <div className="toolbar-box">
           <p className="toolbar-title">Schreibstütze</p>

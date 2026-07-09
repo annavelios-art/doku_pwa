@@ -12,6 +12,7 @@ import {
 } from './lib/patientsDb'
 import './App.css'
 import DocumentationEditor from './components/DocumentationEditor'
+import DateInput from './components/DateInput'
 import { loadModel } from './speech/speechService'
 
 
@@ -1038,7 +1039,7 @@ async function handleImportChangeZip(event) {
     try {
       if (!patientDocumentForm.documentDate) throw new Error('Bitte Datum ausfüllen.')
       if (!patientDocumentForm.title.trim()) throw new Error('Bitte eine kurze Überschrift eintragen.')
-      if (!patientDocumentForm.file) throw new Error('Bitte eine Datei auswählen.')
+      //if (!patientDocumentForm.file) throw new Error('Bitte eine Datei auswählen.')
 
       const changedAt = markDataChanged()
       await savePatientDocument(stampForSave({
@@ -1496,15 +1497,18 @@ function openStoredFile(file) {
                     <p className="muted">Noch keine Dateien.</p>
                   ) : (
                     libraryItems.map(item => (
-                      <StoredFileCard
-                        key={item.id}
-                        title={item.title}
-                        date={item.createdAt}
-                        note={item.note}
-                        file={item.file}
-                        tone="library"
-                        onOpen={openStoredFile}
-                      />
+                     <StoredFileCard
+  key={item.id}
+  title={item.title}
+  date={item.documentDate}
+  note={item.note}
+  file={item.file}
+  tone="patient"
+  onOpen={() => {
+    setPatientDocumentForm(item)
+    setView('patientDocumentEdit')
+  }}
+/>
                     ))
                   )}
                 </div>
@@ -1696,7 +1700,10 @@ function openStoredFile(file) {
                             note={item.note}
                             file={item.file}
                             tone="patient"
-                            onOpen={openStoredFile}
+                            onOpen={() => {
+  setPatientDocumentForm(item)
+  setView('patientDocumentEdit')
+}}
                           />
                         ))
                       )}
@@ -1837,12 +1844,10 @@ function openStoredFile(file) {
                     onChange={event => setPatientForm(prev => ({ ...prev, firstName: event.target.value }))}
                   />
 
-                  <input
-                    type="date"
-                    className="field"
-                    value={patientForm.birthDate}
-                    onChange={event => setPatientForm(prev => ({ ...prev, birthDate: event.target.value }))}
-                  />
+                 <DateInput
+  		value={patientForm.birthDate}
+  		onChange={value => setPatientForm(prev => ({ ...prev, birthDate: value }))}
+		/>
 
                   <button className="btn btn-primary" disabled={saving}>
                     <Save size={16} />
@@ -1862,26 +1867,39 @@ function openStoredFile(file) {
 
                   <h2 className="section-title">Neues Dokument / neuer Befund</h2>
 
-                  <input
-                    type="date"
-                    className="field"
-                    value={patientDocumentForm.documentDate}
-                    onChange={event => setPatientDocumentForm(prev => ({ ...prev, documentDate: event.target.value }))}
-                  />
+              <DateInput
+  		value={patientDocumentForm.documentDate}
+ 		 onChange={value =>
+  		  setPatientDocumentForm(prev => ({
+   		   ...prev,
+   		   documentDate: value,
+   		 }))
+ 		 }
+		/>
 
-                  <input
-                    className="field"
-                    placeholder="Kurze Überschrift, z. B. MRT Schulter rechts"
-                    value={patientDocumentForm.title}
-                    onChange={event => setPatientDocumentForm(prev => ({ ...prev, title: event.target.value }))}
-                  />
+		<input
+  		className="field"
+  		placeholder="Kurze Überschrift, z. B. MRT Schulter rechts"
+ 		 value={patientDocumentForm.title}
+ 		 onChange={event =>
+  		  setPatientDocumentForm(prev => ({
+   		   ...prev,
+    		  title: event.target.value,
+   		 }))
+ 		 }
+		/>
 
-                  <textarea
-                    className="field library-note"
-                    placeholder="Notiz optional"
-                    value={patientDocumentForm.note}
-                    onChange={event => setPatientDocumentForm(prev => ({ ...prev, note: event.target.value }))}
-                  />
+<textarea
+  className="field library-note"
+  placeholder="Notiz optional"
+  value={patientDocumentForm.note}
+  onChange={event =>
+    setPatientDocumentForm(prev => ({
+      ...prev,
+      note: event.target.value,
+    }))
+  }
+/>
 
                   <label className="upload-card">
                     <span>
@@ -1943,12 +1961,10 @@ function openStoredFile(file) {
                     Abbrechen
                   </button>
 
-                  <input
-                    type="date"
-                    className="field"
-                    value={prescriptionForm.issueDate}
-                    onChange={event => setPrescriptionForm(prev => ({ ...prev, issueDate: event.target.value }))}
-                  />
+                 <DateInput
+  			value={prescriptionForm.issueDate}
+  			onChange={value => setPrescriptionForm(prev => ({ ...prev, issueDate: value }))}
+		 />
 
                   <input
                     className="field"
