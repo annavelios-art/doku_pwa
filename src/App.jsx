@@ -1497,18 +1497,15 @@ function openStoredFile(file) {
                     <p className="muted">Noch keine Dateien.</p>
                   ) : (
                     libraryItems.map(item => (
-                     <StoredFileCard
-  key={item.id}
-  title={item.title}
-  date={item.documentDate}
-  note={item.note}
-  file={item.file}
-  tone="patient"
-  onOpen={() => {
-    setPatientDocumentForm(item)
-    setView('patientDocumentEdit')
-  }}
-/>
+                <StoredFileCard
+  			key={item.id}
+  			title={item.title}
+  			date={item.createdAt}
+  			note={item.note}
+  			file={item.file}
+  			tone="library"
+  			onOpen={openStoredFile}
+		/>
                     ))
                   )}
                 </div>
