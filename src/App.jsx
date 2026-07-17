@@ -60,11 +60,10 @@ const ENCRYPTION_ITERATIONS = 100000
 const BACKUP_ARRAY_KEYS = [
   'patients',
   'prescriptions',
-  'docEntries',
-  'docEntryImages',
+  'documentationEntries',
+  'images',
   'patientDocuments',
   'libraryItems',
-  'recentPatients',
 ]
 
 const getNowIso = () => new Date().toISOString()
@@ -139,25 +138,37 @@ function mergeBackupData(currentBackup, incomingBackup) {
 
 function createChangeBackup(fullBackup, changedAfter) {
   const changedDocEntryIds = new Set(
-    (fullBackup.docEntries || [])
+    (fullBackup.documentationEntries || [])
       .filter(item => isChangedAfter(item, changedAfter))
       .map(item => item.id)
   )
 
   return {
     type: 'praxis-doku-change-backup',
-    version: 1,
+    version: 2,
     exportedAt: getNowIso(),
     changedAfter: changedAfter || '',
-    patients: (fullBackup.patients || []).filter(item => isChangedAfter(item, changedAfter)),
-    prescriptions: (fullBackup.prescriptions || []).filter(item => isChangedAfter(item, changedAfter)),
-    docEntries: (fullBackup.docEntries || []).filter(item => isChangedAfter(item, changedAfter)),
-    docEntryImages: (fullBackup.docEntryImages || []).filter(item =>
-      isChangedAfter(item, changedAfter) || changedDocEntryIds.has(item.docEntryId)
-    ),
-    patientDocuments: (fullBackup.patientDocuments || []).filter(item => isChangedAfter(item, changedAfter)),
-    libraryItems: (fullBackup.libraryItems || []).filter(item => isChangedAfter(item, changedAfter)),
-    recentPatients: (fullBackup.recentPatients || []).filter(item => isChangedAfter(item, changedAfter)),
+
+    patients: (fullBackup.patients || [])
+      .filter(item => isChangedAfter(item, changedAfter)),
+
+    prescriptions: (fullBackup.prescriptions || [])
+      .filter(item => isChangedAfter(item, changedAfter)),
+
+    documentationEntries: (fullBackup.documentationEntries || [])
+      .filter(item => isChangedAfter(item, changedAfter)),
+
+    images: (fullBackup.images || [])
+      .filter(item =>
+        isChangedAfter(item, changedAfter) ||
+        changedDocEntryIds.has(item.docEntryId)
+      ),
+
+    patientDocuments: (fullBackup.patientDocuments || [])
+      .filter(item => isChangedAfter(item, changedAfter)),
+
+    libraryItems: (fullBackup.libraryItems || [])
+      .filter(item => isChangedAfter(item, changedAfter)),
   }
 }
 
