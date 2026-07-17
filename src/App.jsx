@@ -56,6 +56,7 @@ const USER_ROLE_LABELS = {
 const LAST_MODIFIED_STORAGE_KEY = 'pwaLastModifiedAt'
 const LAST_ENCRYPTED_EXPORT_STORAGE_KEY = 'pwaLastEncryptedExportAt'
 const ENCRYPTION_ITERATIONS = 100000
+const APP_VERSION = '2026-07-17-backup-v2'
 
 const BACKUP_ARRAY_KEYS = [
   'patients',
