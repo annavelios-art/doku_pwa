@@ -803,9 +803,21 @@ async function handleExportChangeZip() {
     const changeCount = BACKUP_ARRAY_KEYS.reduce((sum, key) => sum + (changeBackup[key]?.length || 0), 0)
 
     if (changeCount === 0) {
-      setSuccessMessage('Keine neuen Änderungen seit dem letzten Änderungs-Export.')
-      return
-    }
+  const allDocs = fullBackup.documentationEntries || []
+  const newestDoc = [...allDocs].sort((a, b) =>
+    String(b.updatedAt || b.createdAt || '').localeCompare(
+      String(a.updatedAt || a.createdAt || '')
+    )
+  )[0]
+
+  setSuccessMessage(
+    `Diagnose: ${allDocs.length} Doku-Einträge vorhanden. ` +
+    `Neuester Doku-Zeitpunkt: ${newestDoc?.updatedAt || newestDoc?.createdAt || 'fehlt'}. ` +
+    `Vergleichspunkt: ${lastEncryptedExportAt || 'kein früherer Export'}.`
+  )
+
+  return
+}
 
     const json = JSON.stringify(changeBackup, null, 2)
     const zipBlob = createZipWithBackupJson(json)
