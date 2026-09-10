@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Bell, CircleHelp, CloudUpload, Dumbbell, Edit3, FileText, Home, Library,
-  Plus, Printer, Save, Search, Settings, UserCircle2,
+  Plus, Printer, RotateCcw, Save, Search, Settings, Trash2, UserCircle2,
 } from 'lucide-react'
 import {
-  exportAllData, getAllPatients, getDocEntriesByPrescriptionId, getDocEntryImageCountMap,
+  exportAllData, getAllPatients, getDeletedPatients, getDocEntriesByPrescriptionId, getDocEntryImageCountMap,
   getDocEntryImages, getLibraryItems, getPatientById, getPatientDocumentsByPatientId,
   getPrescriptionsByPatientId, getRecentlyOpenedPatients, importAllDataReplace,
-  markPatientAsRecentlyOpened, saveDocEntry, saveDocEntryImages, saveLibraryItem,
-  savePatient, savePatientDocument, savePrescription,
+  markPatientAsRecentlyOpened, movePatientToTrash, restorePatientFromTrash, saveDocEntry,
+  saveDocEntryImages, saveLibraryItem, savePatient, savePatientDocument, savePrescription,
 } from './lib/patientsDb'
 import './App.css'
 import DocumentationEditor from './components/DocumentationEditor'
 import DateInput from './components/DateInput'
 import { loadModel } from './speech/speechService'
+import { supabase } from './lib/supabase'
+import { downloadVault, getVaultInfo, uploadVault } from './lib/cloudVault'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -405,6 +407,7 @@ export default function App() {
   const [view, setView] = useState('list')
   const [nav, setNav] = useState('patients')
   const [patients, setPatients] = useState([])
+  const [deletedPatients, setDeletedPatients] = useState([])
   const [recentPatients, setRecentPatients] = useState([])
   const [selectedPatient, setSelectedPatient] = useState(null)
   const [selectedPrescription, setSelectedPrescription] = useState(null)
@@ -435,8 +438,14 @@ export default function App() {
   const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
   const [lastModifiedAt, setLastModifiedAt] = useState(() => readStoredTimestamp(LAST_MODIFIED_STORAGE_KEY))
   const [lastEncryptedExportAt, setLastEncryptedExportAt] = useState(() => readStoredTimestamp(LAST_ENCRYPTED_EXPORT_STORAGE_KEY))
+  const [cloudUser, setCloudUser] = useState(null)
+  const [cloudEmail, setCloudEmail] = useState('')
+  const [cloudPassword, setCloudPassword] = useState('')
+  const [cloudUpdatedAt, setCloudUpdatedAt] = useState('')
+  const [cloudBusy, setCloudBusy] = useState(false)
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
+  const canManageTrash = isOwner && Boolean(cloudUser)
 
   const filteredPatients = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -446,6 +455,7 @@ export default function App() {
 
   const breadcrumbItems = useMemo(() => {
     if (nav === 'backup') return ['Backup']
+    if (nav === 'trash') return ['Patienten', 'Papierkorb']
     if (nav === 'exercises') return ['Übungen']
     if (nav === 'settings') return ['Einstellungen']
     if (nav === 'library') {
@@ -469,6 +479,24 @@ export default function App() {
   useEffect(() => { loadListData() }, [])
 
   useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setCloudUser(data.user || null))
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => setCloudUser(session?.user || null))
+    return () => data.subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (!cloudUser) { setCloudUpdatedAt(''); return }
+    getVaultInfo(cloudUser.id).then(info => setCloudUpdatedAt(info?.updatedAt || '')).catch(() => setCloudUpdatedAt(''))
+  }, [cloudUser])
+
+  useEffect(() => {
+    if (nav === 'trash' && !canManageTrash) {
+      setNav('patients')
+      setView('list')
+    }
+  }, [canManageTrash, nav])
+
+  useEffect(() => {
     if (!printData) return
 
     const timer = window.setTimeout(() => {
@@ -483,8 +511,13 @@ export default function App() {
     setError('')
 
     try {
-      const [all, recents] = await Promise.all([getAllPatients(), getRecentlyOpenedPatients()])
+      const [all, deleted, recents] = await Promise.all([
+        getAllPatients(),
+        getDeletedPatients(),
+        getRecentlyOpenedPatients(),
+      ])
       setPatients(all)
+      setDeletedPatients(deleted)
       setRecentPatients(recents)
     } catch (e) {
       setError(e.message)
@@ -658,6 +691,43 @@ async function decryptText(encryptedText, password) {
 
   return decoder.decode(decryptedBuffer)
 }
+
+async function handleCloudLogin(event) {
+  event.preventDefault(); setError(''); setCloudBusy(true)
+  try {
+    const { error: loginError } = await supabase.auth.signInWithPassword({ email: cloudEmail.trim(), password: cloudPassword })
+    if (loginError) throw loginError
+    setCloudPassword(''); setSuccessMessage('Cloud-Anmeldung erfolgreich.')
+  } catch (e) { setError(`Cloud-Anmeldung fehlgeschlagen: ${e.message}`) }
+  finally { setCloudBusy(false) }
+}
+
+async function handleCloudUpload() {
+  const password = window.prompt('Verschlüsselungspasswort für den Cloud-Tresor eingeben:')
+  if (!password || !cloudUser) return
+  setError(''); setCloudBusy(true); setSuccessMessage('Daten werden lokal verschlüsselt und hochgeladen...')
+  try {
+    const result = await uploadVault(await exportAllData(), password, encryptText, cloudUser.id)
+    setCloudUpdatedAt(result.exportedAt)
+    setSuccessMessage(`Cloud-Tresor aktualisiert. ${result.fileCount} Dateien wurden getrennt verschlüsselt.`)
+  } catch (e) { setError(`Cloud-Upload fehlgeschlagen: ${e.message}`) }
+  finally { setCloudBusy(false) }
+}
+
+async function handleCloudDownload() {
+  if (!cloudUser || !window.confirm('Cloud-Daten herunterladen und die lokalen Daten vollständig ersetzen?')) return
+  const password = window.prompt('Verschlüsselungspasswort für den Cloud-Tresor eingeben:')
+  if (!password) return
+  setError(''); setCloudBusy(true)
+  try {
+    const backup = await downloadVault(password, decryptText, cloudUser.id)
+    await importAllDataReplace(backup); await loadListData()
+    markDataChanged(getBackupMaxModifiedAt(backup) || getNowIso())
+    setSelectedPatient(null); setSelectedPrescription(null); setNav('patients'); setView('list')
+    setSuccessMessage('Cloud-Tresor entschlüsselt und lokal wiederhergestellt.')
+  } catch (e) { setError(`Cloud-Download fehlgeschlagen: ${e.message}`) }
+  finally { setCloudBusy(false) }
+}
   async function handleExportBackup() {
     setError('')
     setSuccessMessage('')
@@ -693,6 +763,11 @@ async function handleExportEncryptedBackup() {
 
     const fullBackup = await exportAllData()
     const changeBackup = createChangeBackup(fullBackup, lastEncryptedExportAt)
+console.log('=== CHANGE BACKUP ===')
+console.log(changeBackup)
+console.log('documentationEntries:', changeBackup.documentationEntries)
+console.log('images:', changeBackup.images)
+console.log('lastEncryptedExportAt:', lastEncryptedExportAt)
     const changeCount = BACKUP_ARRAY_KEYS.reduce((sum, key) => sum + (changeBackup[key]?.length || 0), 0)
 
     if (changeCount === 0) {
@@ -950,6 +1025,71 @@ async function handleImportChangeZip(event) {
 
       if (selectedPatient) await loadPatientDetail(saved.id)
       else setView('list')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleMovePatientToTrash() {
+    if (!selectedPatient || !canManageTrash) {
+      setError('Der Papierkorb ist nur für die angemeldete Praxisleitung verfügbar.')
+      return
+    }
+
+    const expectedName = patientLabel(selectedPatient)
+    const confirmation = window.prompt(
+      `Patient in den Papierkorb verschieben?\n\nVerordnungen, Dokumentationen, Bilder und Befunde bleiben erhalten.\n\nZur Bestätigung bitte genau eingeben:\n${expectedName}`,
+    )
+
+    if (confirmation === null) return
+
+    if (confirmation.trim() !== expectedName) {
+      setError('Name stimmt nicht überein. Der Patient wurde nicht verschoben.')
+      return
+    }
+
+    setSaving(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      const changedAt = getNowIso()
+      await movePatientToTrash(selectedPatient.id, changedAt)
+      markDataChanged(changedAt)
+      await loadListData()
+      setSelectedPatient(null)
+      setSelectedPrescription(null)
+      setPrescriptions([])
+      setPatientDocuments([])
+      setDocEntries([])
+      setDocEntryImageCounts({})
+      setNav('patients')
+      setView('list')
+      setSuccessMessage(`${expectedName} wurde in den Papierkorb verschoben. Alle zugehörigen Daten bleiben erhalten.`)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleRestorePatient(patient) {
+    if (!canManageTrash) {
+      setError('Der Papierkorb ist nur für die angemeldete Praxisleitung verfügbar.')
+      return
+    }
+
+    setSaving(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      await restorePatientFromTrash(patient.id)
+      markDataChanged()
+      await loadListData()
+      setSuccessMessage(`${patientLabel(patient)} wurde wiederhergestellt.`)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -1265,6 +1405,7 @@ function openStoredFile(file) {
           <nav className="sidebar-nav">
             {[
               ['patients', 'Patienten', Home],
+              ...(canManageTrash ? [['trash', `Papierkorb (${deletedPatients.length})`, Trash2]] : []),
               ['exercises', 'Übungen', Dumbbell],
               ['library', 'Bibliothek', Library],
               ['backup', 'Backup', CloudUpload],
@@ -1278,6 +1419,7 @@ function openStoredFile(file) {
                   setNav(key)
                   setSuccessMessage('')
                   if (key === 'patients') setView('list')
+                  if (key === 'trash') setView('trash')
                   if (key === 'backup') setView('backup')
                   if (key === 'library') setView('libraryHome')
                   if (key === 'exercises') setView('list')
@@ -1406,6 +1548,26 @@ function openStoredFile(file) {
                 <p className="muted">
                   Hier liegt das vollständige Rettungsboot: ZIP-Backup exportieren oder komplett wieder einspielen.
                 </p>
+
+                <div className="backup-card">
+                  <h3>Verschlüsselter Cloud-Tresor</h3>
+                  {!cloudUser ? (
+                    <form className="stack-sm" onSubmit={handleCloudLogin}>
+                      <input className="field" type="email" placeholder="Geschäftliche E-Mail" value={cloudEmail} onChange={e => setCloudEmail(e.target.value)} required />
+                      <input className="field" type="password" placeholder="Doku-PWA-Passwort" value={cloudPassword} onChange={e => setCloudPassword(e.target.value)} required />
+                      <button className="btn btn-primary" disabled={cloudBusy}>Bei Supabase anmelden</button>
+                    </form>
+                  ) : (
+                    <div className="stack-sm">
+                      <p className="muted">Angemeldet als <strong>{cloudUser.email}</strong></p>
+                      <p className="muted">Cloud-Stand: <strong>{cloudUpdatedAt ? formatDateTime(cloudUpdatedAt) : 'Noch kein Cloud-Backup'}</strong></p>
+                      <button className="btn btn-secondary" onClick={handleCloudUpload} disabled={cloudBusy}>Verschlüsselt hochladen</button>
+                      <button className="btn btn-ghost" onClick={handleCloudDownload} disabled={cloudBusy}>Cloud-Daten herunterladen</button>
+                      <button className="btn btn-ghost" onClick={() => supabase.auth.signOut()} disabled={cloudBusy}>Abmelden</button>
+                    </div>
+                  )}
+                  <p className="muted">Das Verschlüsselungspasswort verlässt dieses Gerät nicht und wird nicht gespeichert.</p>
+                </div>
 
                 <div className="backup-card">
                   <h3>Komplettes ZIP-Backup</h3>
@@ -1663,6 +1825,51 @@ function openStoredFile(file) {
               </section>
             )}
 
+            {nav === 'trash' && view === 'trash' && canManageTrash && (
+              <section className="surface-card stack-lg">
+                <div>
+                  <h2 className="section-title">Papierkorb</h2>
+                  <p className="muted">
+                    Hier wurde noch nichts endgültig gelöscht. Verordnungen, Dokumentationen, Bilder und Befunde bleiben vollständig erhalten.
+                  </p>
+                </div>
+
+                <button className="btn btn-ghost-inline" onClick={goPatients}>
+                  <ArrowLeft size={16} />
+                  Zurück zur Patientenliste
+                </button>
+
+                <div className="stack">
+                  {deletedPatients.length === 0 ? (
+                    <p className="muted">Der Papierkorb ist leer.</p>
+                  ) : (
+                    deletedPatients.map(patient => (
+                      <article key={patient.id} className="trash-patient-card">
+                        <div>
+                          <p className="trash-patient-name">{patient.lastName}, {patient.firstName}</p>
+                          <p className="muted">Geboren: {formatDate(patient.birthDate)}</p>
+                          <p className="muted">Verschoben: {formatDateTime(patient.deletedAt)}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => handleRestorePatient(patient)}
+                          disabled={saving}
+                        >
+                          <RotateCcw size={15} />
+                          Wiederherstellen
+                        </button>
+                      </article>
+                    ))
+                  )}
+                </div>
+
+                <div className="trash-safety-note">
+                  Endgültiges Löschen ist absichtlich noch nicht freigeschaltet.
+                </div>
+              </section>
+            )}
+
             {view === 'patientDetail' && selectedPatient && (
               <section className="stack">
                 <button className="btn btn-ghost-inline" onClick={() => setView('list')}>
@@ -1874,6 +2081,29 @@ function openStoredFile(file) {
                     <Save size={16} />
                     {saving ? 'Speichern...' : 'Speichern'}
                   </button>
+
+                  {selectedPatient && canManageTrash && (
+                    <div className="trash-action-box">
+                      <p>
+                        Der Patient wird nur aus der aktiven Liste entfernt. Alle zugehörigen Daten bleiben wiederherstellbar.
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={handleMovePatientToTrash}
+                        disabled={saving}
+                      >
+                        <Trash2 size={16} />
+                        In den Papierkorb verschieben
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedPatient && isOwner && !cloudUser && (
+                    <p className="muted trash-login-note">
+                      Für den Papierkorb bitte zuerst im Bereich Backup mit deinem Supabase-Konto anmelden.
+                    </p>
+                  )}
                 </form>
               </section>
             )}

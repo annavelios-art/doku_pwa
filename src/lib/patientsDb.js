@@ -90,13 +90,29 @@ export async function getAllPatients() {
   try {
     const patients = await getAllFromStore(PATIENT_STORE)
 
-    return patients.sort((a, b) => {
+    return patients.filter(patient => !patient.deletedAt).sort((a, b) => {
       const byLastName = a.lastName.localeCompare(b.lastName, 'de')
       if (byLastName !== 0) return byLastName
       return a.firstName.localeCompare(b.firstName, 'de')
     })
   } catch (error) {
     throw new Error(`Patienten konnten nicht geladen werden: ${error.message}`)
+  }
+}
+
+export async function getDeletedPatients() {
+  try {
+    const patients = await getAllFromStore(PATIENT_STORE)
+
+    return patients.filter(patient => patient.deletedAt).sort((a, b) => {
+      const byDeletedAt = b.deletedAt.localeCompare(a.deletedAt)
+      if (byDeletedAt !== 0) return byDeletedAt
+      const byLastName = a.lastName.localeCompare(b.lastName, 'de')
+      if (byLastName !== 0) return byLastName
+      return a.firstName.localeCompare(b.firstName, 'de')
+    })
+  } catch (error) {
+    throw new Error(`Papierkorb konnte nicht geladen werden: ${error.message}`)
   }
 }
 
@@ -131,6 +147,45 @@ export async function savePatient(patientInput) {
   }
 }
 
+async function setPatientDeletedAt(id, deletedAt) {
+  try {
+    const db = await openDb()
+    const tx = db.transaction([PATIENT_STORE, META_STORE], 'readwrite')
+    const patientStore = tx.objectStore(PATIENT_STORE)
+    const metaStore = tx.objectStore(META_STORE)
+    const patient = await getRequestResult(patientStore.get(id))
+
+    if (!patient) throw new Error('Patient wurde nicht gefunden.')
+
+    patientStore.put({
+      ...patient,
+      deletedAt,
+      updatedAt: deletedAt || new Date().toISOString(),
+    })
+
+    if (deletedAt) {
+      const recentsEntry = await getRequestResult(metaStore.get(LAST_OPENED_KEY))
+      const recentIds = Array.isArray(recentsEntry?.value) ? recentsEntry.value : []
+      metaStore.put({
+        key: LAST_OPENED_KEY,
+        value: recentIds.filter(patientId => patientId !== id),
+      })
+    }
+
+    await waitForTransaction(tx, 'Papierkorb-Aktion konnte nicht gespeichert werden.')
+  } catch (error) {
+    throw new Error(`Papierkorb-Aktion fehlgeschlagen: ${error.message}`)
+  }
+}
+
+export async function movePatientToTrash(id, deletedAt = new Date().toISOString()) {
+  await setPatientDeletedAt(id, deletedAt)
+}
+
+export async function restorePatientFromTrash(id) {
+  await setPatientDeletedAt(id, '')
+}
+
 export async function markPatientAsRecentlyOpened(id) {
   try {
     const db = await openDb()
@@ -161,7 +216,7 @@ export async function getRecentlyOpenedPatients() {
     const recentIds = Array.isArray(recentsEntry?.value) ? recentsEntry.value : []
 
     const patients = await Promise.all(recentIds.map(id => getRequestResult(patientStore.get(id))))
-    return patients.filter(Boolean)
+    return patients.filter(patient => patient && !patient.deletedAt)
   } catch (error) {
     throw new Error(`Zuletzt geöffnete Patienten konnten nicht geladen werden: ${error.message}`)
   }

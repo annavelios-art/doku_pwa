@@ -385,6 +385,58 @@ textarea {
   color: #b91c1c;
 }
 
+.trash-action-box {
+  margin-top: 14px;
+  border: 1px solid #fecaca;
+  background: #fff8f8;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.trash-action-box p,
+.trash-login-note {
+  margin: 0 0 10px;
+  font-size: .78rem;
+  line-height: 1.4;
+}
+
+.trash-patient-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #e4dbd1;
+  background: #fffaf7;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.trash-patient-card .muted {
+  margin: 4px 0 0;
+  font-size: .76rem;
+}
+
+.trash-patient-name {
+  margin: 0;
+  font-weight: 650;
+}
+
+.trash-safety-note {
+  border: 1px solid #d8e3ee;
+  background: #f5f9ff;
+  color: #526273;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: .8rem;
+}
+
+@media (max-width: 520px) {
+  .trash-patient-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .add-patient-btn {
   width: fit-content;
 }
