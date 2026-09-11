@@ -430,6 +430,38 @@ textarea {
   font-size: .8rem;
 }
 
+.sync-status {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid #d8e3ee;
+  border-radius: 10px;
+  background: #f5f9ff;
+  color: #526273;
+  font-size: .8rem;
+  line-height: 1.4;
+}
+
+.sync-status-active {
+  border-color: #b7e2ca;
+  background: #f0fbf5;
+  color: #176b45;
+}
+
+.sync-status-waiting,
+.sync-status-syncing {
+  border-color: #f0d596;
+  background: #fffaf0;
+  color: #7a5711;
+}
+
+.sync-status-error,
+.sync-status-conflict {
+  border-color: #fecaca;
+  background: #fff5f5;
+  color: #a32626;
+}
+
 @media (max-width: 520px) {
   .trash-patient-card {
     align-items: stretch;

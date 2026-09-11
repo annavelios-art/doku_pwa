@@ -15,7 +15,7 @@ import DocumentationEditor from './components/DocumentationEditor'
 import DateInput from './components/DateInput'
 import { loadModel } from './speech/speechService'
 import { supabase } from './lib/supabase'
-import { downloadVault, getVaultInfo, uploadVault } from './lib/cloudVault'
+import { downloadVault, downloadVaultManifest, getVaultInfo, uploadVault } from './lib/cloudVault'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -57,6 +57,8 @@ const USER_ROLE_LABELS = {
 
 const LAST_MODIFIED_STORAGE_KEY = 'pwaLastModifiedAt'
 const LAST_ENCRYPTED_EXPORT_STORAGE_KEY = 'pwaLastEncryptedExportAt'
+const AUTO_SYNC_DEBOUNCE_MS = 8000
+const AUTO_SYNC_POLL_MS = 20000
 const ENCRYPTION_ITERATIONS = 100000
 const APP_VERSION = '2026-07-17-backup-v2'
 
@@ -443,6 +445,15 @@ export default function App() {
   const [cloudPassword, setCloudPassword] = useState('')
   const [cloudUpdatedAt, setCloudUpdatedAt] = useState('')
   const [cloudBusy, setCloudBusy] = useState(false)
+  const [autoSyncPassword, setAutoSyncPassword] = useState('')
+  const [autoSyncStatus, setAutoSyncStatus] = useState('off')
+  const [autoSyncMessage, setAutoSyncMessage] = useState('Automatische Synchronisation ist ausgeschaltet.')
+  const autoSyncBusyRef = useRef(false)
+  const autoSyncTimerRef = useRef(null)
+  const lastCloudTimestampRef = useRef('')
+  const lastSyncedLocalTimestampRef = useRef('')
+  const lastModifiedAtRef = useRef(lastModifiedAt)
+  const remoteApplyRef = useRef(false)
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
   const canManageTrash = isOwner && Boolean(cloudUser)
@@ -480,14 +491,98 @@ export default function App() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setCloudUser(data.user || null))
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => setCloudUser(session?.user || null))
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      setCloudUser(session?.user || null)
+      if (event === 'SIGNED_OUT') {
+        window.clearTimeout(autoSyncTimerRef.current)
+        setAutoSyncPassword('')
+        setAutoSyncStatus('off')
+        setAutoSyncMessage('Automatische Synchronisation ist ausgeschaltet.')
+      }
+    })
     return () => data.subscription.unsubscribe()
   }, [])
 
   useEffect(() => {
     if (!cloudUser) { setCloudUpdatedAt(''); return }
-    getVaultInfo(cloudUser.id).then(info => setCloudUpdatedAt(info?.updatedAt || '')).catch(() => setCloudUpdatedAt(''))
+    getVaultInfo(cloudUser.id).then(info => {
+      const updatedAt = info?.updatedAt || ''
+      setCloudUpdatedAt(updatedAt)
+      lastCloudTimestampRef.current = updatedAt
+    }).catch(() => setCloudUpdatedAt(''))
   }, [cloudUser])
+
+  useEffect(() => {
+    lastModifiedAtRef.current = lastModifiedAt
+  }, [lastModifiedAt])
+
+  useEffect(() => {
+    if (!autoSyncPassword || !cloudUser) return undefined
+
+    const checkCloud = async () => {
+      if (autoSyncBusyRef.current) return
+
+      try {
+        const info = await getVaultInfo(cloudUser.id)
+        const remoteTimestamp = info?.updatedAt || ''
+        if (!remoteTimestamp || remoteTimestamp === lastCloudTimestampRef.current) return
+
+        if (lastModifiedAtRef.current !== lastSyncedLocalTimestampRef.current) {
+          setAutoSyncStatus('conflict')
+          setAutoSyncMessage('Cloud-Änderung erkannt, während dieses Gerät noch eigene Änderungen hat. Synchronisation wurde sicher angehalten.')
+          return
+        }
+
+        autoSyncBusyRef.current = true
+        setAutoSyncStatus('syncing')
+        setAutoSyncMessage('Änderungen von einem anderen Gerät werden übernommen ...')
+        const currentBackup = await exportAllData()
+        const incoming = await downloadVault(autoSyncPassword, decryptText, cloudUser.id, currentBackup)
+        await importAllDataReplace(incoming)
+        remoteApplyRef.current = true
+        const importedTimestamp = getBackupMaxModifiedAt(incoming) || incoming.exportedAt || getNowIso()
+        writeStoredTimestamp(LAST_MODIFIED_STORAGE_KEY, importedTimestamp)
+        lastModifiedAtRef.current = importedTimestamp
+        lastSyncedLocalTimestampRef.current = importedTimestamp
+        setLastModifiedAt(importedTimestamp)
+        lastCloudTimestampRef.current = remoteTimestamp
+        setCloudUpdatedAt(remoteTimestamp)
+        await loadListData()
+        setSelectedPatient(null)
+        setSelectedPrescription(null)
+        setNav('patients')
+        setView('list')
+        setAutoSyncStatus('active')
+        setAutoSyncMessage('Aktuell – Änderung von einem anderen Gerät wurde übernommen.')
+      } catch (e) {
+        setAutoSyncStatus('error')
+        setAutoSyncMessage(`Synchronisation angehalten: ${e.message}`)
+      } finally {
+        autoSyncBusyRef.current = false
+      }
+    }
+
+    const interval = window.setInterval(checkCloud, AUTO_SYNC_POLL_MS)
+    return () => window.clearInterval(interval)
+  }, [autoSyncPassword, cloudUser])
+
+  useEffect(() => {
+    if (!autoSyncPassword || !cloudUser || !lastModifiedAt) return undefined
+    if (remoteApplyRef.current) {
+      remoteApplyRef.current = false
+      return undefined
+    }
+    if (lastModifiedAt === lastSyncedLocalTimestampRef.current) return undefined
+
+    setAutoSyncStatus('waiting')
+    setAutoSyncMessage('Lokale Änderung erkannt – wird gleich verschlüsselt synchronisiert ...')
+    window.clearTimeout(autoSyncTimerRef.current)
+    autoSyncTimerRef.current = window.setTimeout(() => {
+      syncLocalVault(autoSyncPassword, true)
+    }, AUTO_SYNC_DEBOUNCE_MS)
+
+    return () => window.clearTimeout(autoSyncTimerRef.current)
+  }, [lastModifiedAt, autoSyncPassword, cloudUser])
 
   useEffect(() => {
     if (nav === 'trash' && !canManageTrash) {
@@ -495,6 +590,10 @@ export default function App() {
       setView('list')
     }
   }, [canManageTrash, nav])
+
+  useEffect(() => {
+    if (!isOwner && autoSyncPassword) handleDisableAutoSync()
+  }, [isOwner, autoSyncPassword])
 
   useEffect(() => {
     if (!printData) return
@@ -702,16 +801,128 @@ async function handleCloudLogin(event) {
   finally { setCloudBusy(false) }
 }
 
+async function syncLocalVault(password, automatic = false) {
+  if (!password || !cloudUser || autoSyncBusyRef.current) return
+  autoSyncBusyRef.current = true
+  setCloudBusy(true)
+  if (automatic) {
+    setAutoSyncStatus('syncing')
+    setAutoSyncMessage('Änderung wird lokal verschlüsselt und hochgeladen ...')
+  }
+
+  try {
+    const infoBefore = await getVaultInfo(cloudUser.id)
+    const previousManifest = infoBefore
+      ? await downloadVaultManifest(password, decryptText, cloudUser.id)
+      : null
+    const backup = await exportAllData()
+    const result = await uploadVault(backup, password, encryptText, cloudUser.id, previousManifest)
+    const infoAfter = await getVaultInfo(cloudUser.id)
+    const remoteTimestamp = infoAfter?.updatedAt || result.exportedAt
+    const localTimestamp = getBackupMaxModifiedAt(backup) || lastModifiedAtRef.current || result.exportedAt
+
+    lastCloudTimestampRef.current = remoteTimestamp
+    lastSyncedLocalTimestampRef.current = localTimestamp
+    setCloudUpdatedAt(remoteTimestamp)
+    setAutoSyncStatus(autoSyncPassword || automatic ? 'active' : 'off')
+    setAutoSyncMessage(
+      automatic
+        ? `Aktuell – ${result.fileCount} geänderte Datei(en) übertragen.`
+        : 'Cloud-Tresor wurde erfolgreich aktualisiert.'
+    )
+    if (!automatic) {
+      setSuccessMessage(`Cloud-Tresor aktualisiert. ${result.fileCount} geänderte Dateien wurden übertragen.`)
+    }
+  } catch (e) {
+    if (automatic) {
+      setAutoSyncStatus('error')
+      setAutoSyncMessage(`Automatische Synchronisation angehalten: ${e.message}`)
+    } else {
+      setError(`Cloud-Upload fehlgeschlagen: ${e.message}`)
+    }
+  } finally {
+    autoSyncBusyRef.current = false
+    setCloudBusy(false)
+  }
+}
+
+async function handleEnableAutoSync() {
+  if (!cloudUser || !isOwner || autoSyncBusyRef.current) return
+  const password = window.prompt('Tresor-Passwort eingeben. Es bleibt nur bis zum Schließen der PWA im Arbeitsspeicher:')
+  if (!password) return
+
+  setError('')
+  setCloudBusy(true)
+  autoSyncBusyRef.current = true
+  setAutoSyncStatus('syncing')
+  setAutoSyncMessage('Tresor wird geprüft und sicher mit diesem Gerät abgeglichen ...')
+
+  try {
+    const info = await getVaultInfo(cloudUser.id)
+    let remoteBackup = null
+    let remoteManifest = null
+    const localBackup = await exportAllData()
+
+    if (info) {
+      remoteManifest = await downloadVaultManifest(password, decryptText, cloudUser.id)
+      remoteBackup = await downloadVault(password, decryptText, cloudUser.id, localBackup)
+    } else {
+      const confirmation = window.prompt('Noch einmal dasselbe Tresor-Passwort eingeben:')
+      if (confirmation !== password) throw new Error('Die beiden Passwörter stimmen nicht überein.')
+    }
+
+    const mergedBackup = remoteBackup ? mergeBackupData(localBackup, remoteBackup) : localBackup
+    if (remoteBackup) {
+      await importAllDataReplace(mergedBackup)
+      await loadListData()
+    }
+
+    const result = await uploadVault(mergedBackup, password, encryptText, cloudUser.id, remoteManifest)
+    const infoAfter = await getVaultInfo(cloudUser.id)
+    const remoteTimestamp = infoAfter?.updatedAt || result.exportedAt
+    const localTimestamp = getBackupMaxModifiedAt(mergedBackup) || result.exportedAt
+
+    writeStoredTimestamp(LAST_MODIFIED_STORAGE_KEY, localTimestamp)
+    lastModifiedAtRef.current = localTimestamp
+    lastSyncedLocalTimestampRef.current = localTimestamp
+    lastCloudTimestampRef.current = remoteTimestamp
+    setLastModifiedAt(localTimestamp)
+    setCloudUpdatedAt(remoteTimestamp)
+    setAutoSyncPassword(password)
+    setAutoSyncStatus('active')
+    setAutoSyncMessage(`Aktuell – automatische Synchronisation läuft. ${result.fileCount} geänderte Datei(en) übertragen.`)
+    setSuccessMessage('Automatische Synchronisation wurde sicher gestartet.')
+  } catch (e) {
+    setAutoSyncPassword('')
+    setAutoSyncStatus('error')
+    setAutoSyncMessage(`Synchronisation nicht gestartet: ${e.message}`)
+    setError(`Synchronisation nicht gestartet: ${e.message}`)
+  } finally {
+    autoSyncBusyRef.current = false
+    setCloudBusy(false)
+  }
+}
+
+function handleDisableAutoSync() {
+  window.clearTimeout(autoSyncTimerRef.current)
+  setAutoSyncPassword('')
+  setAutoSyncStatus('off')
+  setAutoSyncMessage('Automatische Synchronisation ist ausgeschaltet.')
+}
+
 async function handleCloudUpload() {
   const password = window.prompt('Verschlüsselungspasswort für den Cloud-Tresor eingeben:')
   if (!password || !cloudUser) return
-  setError(''); setCloudBusy(true); setSuccessMessage('Daten werden lokal verschlüsselt und hochgeladen...')
-  try {
-    const result = await uploadVault(await exportAllData(), password, encryptText, cloudUser.id)
-    setCloudUpdatedAt(result.exportedAt)
-    setSuccessMessage(`Cloud-Tresor aktualisiert. ${result.fileCount} Dateien wurden getrennt verschlüsselt.`)
-  } catch (e) { setError(`Cloud-Upload fehlgeschlagen: ${e.message}`) }
-  finally { setCloudBusy(false) }
+  const existingVault = await getVaultInfo(cloudUser.id).catch(() => null)
+  if (!existingVault) {
+    const confirmation = window.prompt('Dasselbe Verschlüsselungspasswort noch einmal eingeben:')
+    if (confirmation !== password) {
+      setError('Die beiden Passwörter stimmen nicht überein. Es wurde nichts hochgeladen.')
+      return
+    }
+  }
+  setError(''); setSuccessMessage('Daten werden lokal verschlüsselt und hochgeladen...')
+  await syncLocalVault(password, false)
 }
 
 async function handleCloudDownload() {
@@ -720,9 +931,13 @@ async function handleCloudDownload() {
   if (!password) return
   setError(''); setCloudBusy(true)
   try {
-    const backup = await downloadVault(password, decryptText, cloudUser.id)
+    const currentBackup = await exportAllData()
+    const backup = await downloadVault(password, decryptText, cloudUser.id, currentBackup)
     await importAllDataReplace(backup); await loadListData()
-    markDataChanged(getBackupMaxModifiedAt(backup) || getNowIso())
+    const importedTimestamp = getBackupMaxModifiedAt(backup) || getNowIso()
+    remoteApplyRef.current = true
+    markDataChanged(importedTimestamp)
+    lastSyncedLocalTimestampRef.current = importedTimestamp
     setSelectedPatient(null); setSelectedPrescription(null); setNav('patients'); setView('list')
     setSuccessMessage('Cloud-Tresor entschlüsselt und lokal wiederhergestellt.')
   } catch (e) { setError(`Cloud-Download fehlgeschlagen: ${e.message}`) }
@@ -1563,10 +1778,23 @@ function openStoredFile(file) {
                       <p className="muted">Cloud-Stand: <strong>{cloudUpdatedAt ? formatDateTime(cloudUpdatedAt) : 'Noch kein Cloud-Backup'}</strong></p>
                       <button className="btn btn-secondary" onClick={handleCloudUpload} disabled={cloudBusy}>Verschlüsselt hochladen</button>
                       <button className="btn btn-ghost" onClick={handleCloudDownload} disabled={cloudBusy}>Cloud-Daten herunterladen</button>
-                      <button className="btn btn-ghost" onClick={() => supabase.auth.signOut()} disabled={cloudBusy}>Abmelden</button>
+                      <div className={`sync-status sync-status-${autoSyncStatus}`}>
+                        <strong>Geräte-Synchronisation</strong>
+                        <span>{autoSyncMessage}</span>
+                      </div>
+                      {!autoSyncPassword ? (
+                        <button className="btn btn-green" onClick={handleEnableAutoSync} disabled={cloudBusy}>
+                          Automatische Synchronisation starten
+                        </button>
+                      ) : (
+                        <button className="btn btn-ghost" onClick={handleDisableAutoSync} disabled={cloudBusy}>
+                          Automatische Synchronisation beenden
+                        </button>
+                      )}
+                      <button className="btn btn-ghost" onClick={() => { handleDisableAutoSync(); supabase.auth.signOut() }} disabled={cloudBusy}>Abmelden</button>
                     </div>
                   )}
-                  <p className="muted">Das Verschlüsselungspasswort verlässt dieses Gerät nicht und wird nicht gespeichert.</p>
+                  <p className="muted">Das Verschlüsselungspasswort verlässt dieses Gerät nicht. Für automatische Synchronisation bleibt es nur bis zum Schließen der PWA im Arbeitsspeicher.</p>
                 </div>
 
                 <div className="backup-card">

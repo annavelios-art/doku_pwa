@@ -13,7 +13,9 @@ dist-ssr
 *.local
 .env
 .env.*
-*.zip
+praxis-doku-backup-*.zip
+doku_pwa*.zip
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
