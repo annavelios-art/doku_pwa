@@ -527,38 +527,15 @@ export default function App() {
         const remoteTimestamp = info?.updatedAt || ''
         if (!remoteTimestamp || remoteTimestamp === lastCloudTimestampRef.current) return
 
-        if (lastModifiedAtRef.current !== lastSyncedLocalTimestampRef.current) {
-          setAutoSyncStatus('conflict')
-          setAutoSyncMessage('Cloud-Änderung erkannt, während dieses Gerät noch eigene Änderungen hat. Synchronisation wurde sicher angehalten.')
-          return
-        }
-
-        autoSyncBusyRef.current = true
+        // WICHTIG: Nie einen veralteten lokalen Komplettstand blind hochladen.
+        // Auch wenn dieses Gerät eigene Änderungen hat, werden zuerst beide Stände
+        // zusammengeführt (pro Datensatz gewinnt updatedAt) und erst danach hochgeladen.
         setAutoSyncStatus('syncing')
-        setAutoSyncMessage('Änderungen von einem anderen Gerät werden übernommen ...')
-        const currentBackup = await exportAllData()
-        const incoming = await downloadVault(autoSyncPassword, decryptText, cloudUser.id, currentBackup)
-        await importAllDataReplace(incoming)
-        remoteApplyRef.current = true
-        const importedTimestamp = getBackupMaxModifiedAt(incoming) || incoming.exportedAt || getNowIso()
-        writeStoredTimestamp(LAST_MODIFIED_STORAGE_KEY, importedTimestamp)
-        lastModifiedAtRef.current = importedTimestamp
-        lastSyncedLocalTimestampRef.current = importedTimestamp
-        setLastModifiedAt(importedTimestamp)
-        lastCloudTimestampRef.current = remoteTimestamp
-        setCloudUpdatedAt(remoteTimestamp)
-        await loadListData()
-        setSelectedPatient(null)
-        setSelectedPrescription(null)
-        setNav('patients')
-        setView('list')
-        setAutoSyncStatus('active')
-        setAutoSyncMessage('Aktuell – Änderung von einem anderen Gerät wurde übernommen.')
+        setAutoSyncMessage('Cloud-Änderung erkannt – beide Geräte werden sicher zusammengeführt ...')
+        await syncLocalVault(autoSyncPassword, true, 'remote')
       } catch (e) {
         setAutoSyncStatus('error')
         setAutoSyncMessage(`Synchronisation angehalten: ${e.message}`)
-      } finally {
-        autoSyncBusyRef.current = false
       }
     }
 
@@ -801,44 +778,85 @@ async function handleCloudLogin(event) {
   finally { setCloudBusy(false) }
 }
 
-async function syncLocalVault(password, automatic = false) {
+async function syncLocalVault(password, automatic = false, reason = 'local') {
   if (!password || !cloudUser || autoSyncBusyRef.current) return
   autoSyncBusyRef.current = true
   setCloudBusy(true)
   if (automatic) {
     setAutoSyncStatus('syncing')
-    setAutoSyncMessage('Änderung wird lokal verschlüsselt und hochgeladen ...')
+    setAutoSyncMessage(
+      reason === 'remote'
+        ? 'Cloud-Änderung wird mit diesem Gerät zusammengeführt ...'
+        : 'Lokale Änderung wird zuerst mit der Cloud abgeglichen ...'
+    )
   }
 
   try {
-    const infoBefore = await getVaultInfo(cloudUser.id)
-    const previousManifest = infoBefore
-      ? await downloadVaultManifest(password, decryptText, cloudUser.id)
-      : null
-    const backup = await exportAllData()
-    const result = await uploadVault(backup, password, encryptText, cloudUser.id, previousManifest)
+    // Sicherheitsregel: PULL -> MERGE -> PUSH.
+    // Dadurch kann ein Gerät, das über Nacht einen alten lokalen Stand behalten hat,
+    // den neueren Cloud-Stand nicht mehr einfach überschreiben.
+    let localBackup = await exportAllData()
+    let infoBefore = await getVaultInfo(cloudUser.id)
+    let previousManifest = null
+    let mergedBackup = localBackup
+
+    if (infoBefore) {
+      previousManifest = await downloadVaultManifest(password, decryptText, cloudUser.id)
+      const remoteBackup = await downloadVault(password, decryptText, cloudUser.id, localBackup)
+      mergedBackup = mergeBackupData(localBackup, remoteBackup)
+
+      // Falls sich die Cloud genau während des Downloads geändert hat, einmal neu lesen.
+      // Das verkleinert das verbleibende Race-Window zwischen zwei gleichzeitig aktiven Geräten.
+      const infoAfterDownload = await getVaultInfo(cloudUser.id)
+      if (infoAfterDownload?.updatedAt && infoAfterDownload.updatedAt !== infoBefore.updatedAt) {
+        infoBefore = infoAfterDownload
+        previousManifest = await downloadVaultManifest(password, decryptText, cloudUser.id)
+        const newestRemote = await downloadVault(password, decryptText, cloudUser.id, mergedBackup)
+        mergedBackup = mergeBackupData(mergedBackup, newestRemote)
+      }
+
+      await importAllDataReplace(mergedBackup)
+      await loadListData()
+    }
+
+    const result = await uploadVault(mergedBackup, password, encryptText, cloudUser.id, previousManifest)
     const infoAfter = await getVaultInfo(cloudUser.id)
     const remoteTimestamp = infoAfter?.updatedAt || result.exportedAt
-    const localTimestamp = getBackupMaxModifiedAt(backup) || lastModifiedAtRef.current || result.exportedAt
+    const localTimestamp = getBackupMaxModifiedAt(mergedBackup) || lastModifiedAtRef.current || result.exportedAt
 
-    lastCloudTimestampRef.current = remoteTimestamp
+    // Nur wenn der Merge tatsächlich einen anderen Änderungsstand einspielt,
+    // soll der folgende React-Effekt diesen State-Wechsel ignorieren.
+    const timestampChangedByMerge = localTimestamp !== lastModifiedAtRef.current
+    remoteApplyRef.current = timestampChangedByMerge
+    writeStoredTimestamp(LAST_MODIFIED_STORAGE_KEY, localTimestamp)
+    lastModifiedAtRef.current = localTimestamp
     lastSyncedLocalTimestampRef.current = localTimestamp
+    lastCloudTimestampRef.current = remoteTimestamp
+    setLastModifiedAt(localTimestamp)
     setCloudUpdatedAt(remoteTimestamp)
+
+    if (reason === 'remote') {
+      setSelectedPatient(null)
+      setSelectedPrescription(null)
+      setNav('patients')
+      setView('list')
+    }
+
     setAutoSyncStatus(autoSyncPassword || automatic ? 'active' : 'off')
     setAutoSyncMessage(
       automatic
-        ? `Aktuell – ${result.fileCount} geänderte Datei(en) übertragen.`
-        : 'Cloud-Tresor wurde erfolgreich aktualisiert.'
+        ? `Aktuell – Datenstände sicher zusammengeführt. ${result.fileCount} geänderte Datei(en) übertragen.`
+        : 'Cloud-Tresor wurde sicher abgeglichen und aktualisiert.'
     )
     if (!automatic) {
-      setSuccessMessage(`Cloud-Tresor aktualisiert. ${result.fileCount} geänderte Dateien wurden übertragen.`)
+      setSuccessMessage(`Cloud-Tresor sicher synchronisiert. ${result.fileCount} geänderte Dateien wurden übertragen.`)
     }
   } catch (e) {
     if (automatic) {
       setAutoSyncStatus('error')
       setAutoSyncMessage(`Automatische Synchronisation angehalten: ${e.message}`)
     } else {
-      setError(`Cloud-Upload fehlgeschlagen: ${e.message}`)
+      setError(`Cloud-Synchronisation fehlgeschlagen: ${e.message}`)
     }
   } finally {
     autoSyncBusyRef.current = false
@@ -921,7 +939,7 @@ async function handleCloudUpload() {
       return
     }
   }
-  setError(''); setSuccessMessage('Daten werden lokal verschlüsselt und hochgeladen...')
+  setError(''); setSuccessMessage('Lokale und Cloud-Daten werden sicher zusammengeführt und verschlüsselt synchronisiert...')
   await syncLocalVault(password, false)
 }
 
@@ -1776,8 +1794,8 @@ function openStoredFile(file) {
                     <div className="stack-sm">
                       <p className="muted">Angemeldet als <strong>{cloudUser.email}</strong></p>
                       <p className="muted">Cloud-Stand: <strong>{cloudUpdatedAt ? formatDateTime(cloudUpdatedAt) : 'Noch kein Cloud-Backup'}</strong></p>
-                      <button className="btn btn-secondary" onClick={handleCloudUpload} disabled={cloudBusy}>Verschlüsselt hochladen</button>
-                      <button className="btn btn-ghost" onClick={handleCloudDownload} disabled={cloudBusy}>Cloud-Daten herunterladen</button>
+                      <button className="btn btn-secondary" onClick={handleCloudUpload} disabled={cloudBusy}>Sicher mit Cloud synchronisieren</button>
+                      <button className="btn btn-ghost" onClick={handleCloudDownload} disabled={cloudBusy}>Cloud-Daten herunterladen (lokal ersetzen)</button>
                       <div className={`sync-status sync-status-${autoSyncStatus}`}>
                         <strong>Geräte-Synchronisation</strong>
                         <span>{autoSyncMessage}</span>
