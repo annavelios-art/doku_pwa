@@ -58,8 +58,8 @@ export async function getPatientFromSupabase(id) {
   return patientFromRow(data)
 }
 
-export async function savePatientToSupabase(patient, userId, expectedUpdatedAt = '') {
-  if (!patient.id) {
+export async function savePatientToSupabase(patient, userId, expectedUpdatedAt = '', mode = 'auto') {
+  if (mode === 'insert' || !patient.id) {
     const insertRow = rowFromPatient(patient, userId)
     const { data, error } = await supabase
       .from('patients')
