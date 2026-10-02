@@ -99,7 +99,7 @@ export async function cachePatient(item) {
 
 export async function getCachedPatients() {
   const items = await getAll(PATIENTS)
-  return items.sort((a, b) =>
+  return items.filter(item => item.status !== 'conflict').sort((a, b) =>
     (a.lastName || '').localeCompare(b.lastName || '', 'de') ||
     (a.firstName || '').localeCompare(b.firstName || '', 'de')
   )
