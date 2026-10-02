@@ -17,7 +17,6 @@ export default function V2Test() {
   const [password, setPassword] = useState('')
   const [patients, setPatients] = useState([])
   const [status, setStatus] = useState('Bereit')
-  const [lastRealtime, setLastRealtime] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -33,7 +32,11 @@ export default function V2Test() {
       }
       setSession(data.session || null)
     })
-    const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
+
+    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+    })
+
     return () => {
       active = false
       data.subscription.unsubscribe()
@@ -42,16 +45,12 @@ export default function V2Test() {
 
   useEffect(() => {
     if (!session) return
-    loadPatients()
-    const channel = supabase.channel('v2-patients-test')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, payload => {
-        setLastRealtime({
-          eventType: payload.eventType,
-          new: payload.new,
-          old: payload.old,
-          receivedAt: new Date().toISOString(),
-        })
 
+    loadPatients()
+
+    const channel = supabase
+      .channel('v2-patients')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, payload => {
         setPatients(current => {
           if (payload.eventType === 'DELETE') {
             return current.filter(item => item.id !== payload.old?.id)
@@ -59,6 +58,7 @@ export default function V2Test() {
 
           const incoming = payload.new
           if (!incoming?.id) return current
+
           if (incoming.deleted_at) {
             return current.filter(item => item.id !== incoming.id)
           }
@@ -70,26 +70,41 @@ export default function V2Test() {
 
           return sortPatients(next)
         })
-        setStatus('Realtime: Änderung empfangen ✓')
+
+        setStatus('Aktuell ✓')
       })
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [session])
 
-  async function loadPatients(message) {
-    const { data, error } = await supabase.from('patients')
+  async function loadPatients() {
+    const { data, error } = await supabase
+      .from('patients')
       .select('id,first_name,last_name,updated_at,deleted_at')
       .is('deleted_at', null)
       .order('last_name')
-    if (error) return setStatus(error.message)
+
+    if (error) {
+      setStatus('Fehler: ' + error.message)
+      return
+    }
+
     setPatients(data || [])
-    if (message) setStatus(message)
+    setStatus('Aktuell ✓')
   }
 
-  async function login(e) {
-    e.preventDefault()
+  async function login(event) {
+    event.preventDefault()
+
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) return setStatus('Login fehlgeschlagen: ' + error.message)
+    if (error) {
+      setStatus('Login fehlgeschlagen: ' + error.message)
+      return
+    }
+
     localStorage.setItem(LOGIN_AT_KEY, String(Date.now()))
     setSession(data.session)
     setPassword('')
@@ -100,74 +115,64 @@ export default function V2Test() {
     await supabase.auth.signOut()
     localStorage.removeItem(LOGIN_AT_KEY)
     setPatients([])
-    setLastRealtime(null)
     setStatus('Abgemeldet')
   }
 
-  async function addPatient() {
-    const patient = {
-      id: crypto.randomUUID(),
-      first_name: 'Max',
-      last_name: 'Mustermann',
-      created_by: session.user.id,
-    }
-    const { error } = await supabase.from('patients').insert(patient)
-    if (error) return setStatus('Speichern fehlgeschlagen: ' + error.message)
-    setPatients(current => sortPatients([...current, patient]))
-    setStatus('Max Mustermann gespeichert ✓')
+  if (!session) {
+    return (
+      <main className="v2-page">
+        <section className="v2-card">
+          <h1>PhysioOptima · V2</h1>
+          <p>Supabase-Login</p>
+
+          <form onSubmit={login} className="v2-stack">
+            <input
+              type="email"
+              placeholder="E-Mail"
+              value={email}
+              onChange={event => setEmail(event.target.value)}
+              required
+            />
+            <input
+              type="password"
+              placeholder="Passwort"
+              value={password}
+              onChange={event => setPassword(event.target.value)}
+              required
+            />
+            <button>Anmelden</button>
+          </form>
+
+          <p>{status}</p>
+        </section>
+      </main>
+    )
   }
 
-  async function rename(patient) {
-    const next = window.prompt('Neuer Vorname:', patient.first_name)
-    if (!next || next === patient.first_name) return
-    const updatedAt = new Date().toISOString()
-    const { error } = await supabase.from('patients')
-      .update({ first_name: next, updated_at: updatedAt })
-      .eq('id', patient.id)
-    if (error) return setStatus('Ändern fehlgeschlagen: ' + error.message)
+  return (
+    <main className="v2-page">
+      <section className="v2-card">
+        <h1>PhysioOptima · V2 Basis</h1>
 
-    setPatients(current => sortPatients(
-      current.map(item => item.id === patient.id
-        ? { ...item, first_name: next, updated_at: updatedAt }
-        : item)
-    ))
-    setStatus('Änderung gespeichert ✓')
-  }
+        <p>Angemeldet: {session.user.email}</p>
+        <p><b>{status}</b></p>
 
-  if (!session) return <main className="v2-page">
-    <section className="v2-card">
-      <h1>PhysioOptima · V2 Test</h1>
-      <p>Login + einzelne Supabase-Datensätze + Realtime ohne Seitenreload.</p>
-      <form onSubmit={login} className="v2-stack">
-        <input type="email" placeholder="E-Mail" value={email} onChange={e => setEmail(e.target.value)} required />
-        <input type="password" placeholder="Passwort" value={password} onChange={e => setPassword(e.target.value)} required />
-        <button>Anmelden</button>
-      </form>
-      <p>{status}</p>
-    </section>
-  </main>
+        <button onClick={logout}>Abmelden</button>
 
-  return <main className="v2-page">
-    <section className="v2-card">
-      <h1>V2 Teststation</h1>
-      <p>Angemeldet: {session.user.email}</p>
-      <p><b>{status}</b></p>
-      <button onClick={addPatient}>Max Mustermann anlegen</button>
-      <button onClick={logout}>Abmelden</button>
+        <h2>Supabase-Patienten</h2>
 
-      <h2>Neue Supabase-Patienten</h2>
-      {patients.map(p => <div key={p.id} className="v2-row">
-        <span>{p.last_name}, {p.first_name}</span>
-        <button onClick={() => rename(p)}>Vorname ändern</button>
-      </div>)}
-      {patients.length === 0 && <p>Noch leer.</p>}
+        {patients.map(patient => (
+          <div key={patient.id} className="v2-row">
+            <span>{patient.last_name}, {patient.first_name}</span>
+          </div>
+        ))}
 
-      <h3>Realtime-Diagnose</h3>
-      <pre style={{whiteSpace:'pre-wrap', textAlign:'left', fontSize:12, background:'#f7f7f7', padding:10, borderRadius:8}}>
-        {lastRealtime ? JSON.stringify(lastRealtime, null, 2) : 'Noch kein Realtime-Ereignis empfangen.'}
-      </pre>
+        {patients.length === 0 && <p>Noch keine Patienten in der V2-Datenbank.</p>}
 
-      <small>Realtime aktualisiert die Liste direkt aus dem empfangenen Datensatz. Kein Seitenreload. Anmeldung bleibt maximal 10 Tage bestehen.</small>
-    </section>
-  </main>
+        <small>
+          Realtime-Grundlage aktiv · kein Seitenreload · Anmeldung maximal 10 Tage.
+        </small>
+      </section>
+    </main>
+  )
 }
