@@ -17,6 +17,7 @@ export default function V2Test() {
   const [password, setPassword] = useState('')
   const [patients, setPatients] = useState([])
   const [status, setStatus] = useState('Bereit')
+  const [lastRealtime, setLastRealtime] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -44,6 +45,13 @@ export default function V2Test() {
     loadPatients()
     const channel = supabase.channel('v2-patients-test')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, payload => {
+        setLastRealtime({
+          eventType: payload.eventType,
+          new: payload.new,
+          old: payload.old,
+          receivedAt: new Date().toISOString(),
+        })
+
         setPatients(current => {
           if (payload.eventType === 'DELETE') {
             return current.filter(item => item.id !== payload.old?.id)
@@ -92,6 +100,7 @@ export default function V2Test() {
     await supabase.auth.signOut()
     localStorage.removeItem(LOGIN_AT_KEY)
     setPatients([])
+    setLastRealtime(null)
     setStatus('Abgemeldet')
   }
 
@@ -145,12 +154,19 @@ export default function V2Test() {
       <p><b>{status}</b></p>
       <button onClick={addPatient}>Max Mustermann anlegen</button>
       <button onClick={logout}>Abmelden</button>
+
       <h2>Neue Supabase-Patienten</h2>
       {patients.map(p => <div key={p.id} className="v2-row">
         <span>{p.last_name}, {p.first_name}</span>
         <button onClick={() => rename(p)}>Vorname ändern</button>
       </div>)}
       {patients.length === 0 && <p>Noch leer.</p>}
+
+      <h3>Realtime-Diagnose</h3>
+      <pre style={{whiteSpace:'pre-wrap', textAlign:'left', fontSize:12, background:'#f7f7f7', padding:10, borderRadius:8}}>
+        {lastRealtime ? JSON.stringify(lastRealtime, null, 2) : 'Noch kein Realtime-Ereignis empfangen.'}
+      </pre>
+
       <small>Realtime aktualisiert die Liste direkt aus dem empfangenen Datensatz. Kein Seitenreload. Anmeldung bleibt maximal 10 Tage bestehen.</small>
     </section>
   </main>
