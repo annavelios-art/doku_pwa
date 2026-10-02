@@ -26,6 +26,10 @@ import {
 import {
   docEntryFromRow, listDocEntriesForPrescription, saveDocEntryToSupabase,
 } from './lib/supabaseDocEntries'
+import {
+  getDocEntryImageCountMapFromSupabase, listDocEntryImageMeta,
+  loadDocEntryImagesFromSupabase, syncDocEntryImagesToSupabase,
+} from './lib/supabaseDocImages'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -458,6 +462,7 @@ export default function App() {
   const [prescriptionConflict, setPrescriptionConflict] = useState(null)
   const [docConflict, setDocConflict] = useState(null)
   const [docBaseEntry, setDocBaseEntry] = useState(null)
+  const [docImageBaseIds, setDocImageBaseIds] = useState([])
   const [cloudEmail, setCloudEmail] = useState('')
   const [cloudPassword, setCloudPassword] = useState('')
   const [cloudUpdatedAt, setCloudUpdatedAt] = useState('')
@@ -481,6 +486,8 @@ export default function App() {
   const docFormRef = useRef(EMPTY_DOC_FORM)
   const docBaseEntryRef = useRef(null)
   const docSaveBusyRef = useRef(false)
+  const docImagesRef = useRef([])
+  const docImageBaseIdsRef = useRef([])
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
   const canManageTrash = isOwner && Boolean(cloudUser)
@@ -521,8 +528,10 @@ export default function App() {
     prescriptionFormRef.current = prescriptionForm
     docFormRef.current = docForm
     docBaseEntryRef.current = docBaseEntry
+    docImagesRef.current = docImages
+    docImageBaseIdsRef.current = docImageBaseIds
     viewRef.current = view
-  }, [selectedPatient, patientForm, selectedPrescription, prescriptionForm, docForm, docBaseEntry, view])
+  }, [selectedPatient, patientForm, selectedPrescription, prescriptionForm, docForm, docBaseEntry, docImages, docImageBaseIds, view])
 
   useEffect(() => {
     if (cloudUser) loadListData()
@@ -756,6 +765,44 @@ export default function App() {
   }, [cloudUser])
 
   useEffect(() => {
+    if (!cloudUser) return undefined
+
+    const channel = supabase
+      .channel('doku-v2-doc-images')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'doc_entry_images' }, async payload => {
+        const row = payload.new || payload.old
+        const docEntryId = row?.doc_entry_id
+        if (!docEntryId) return
+
+        try {
+          const meta = await listDocEntryImageMeta(docEntryId)
+          setDocEntryImageCounts(current => ({ ...current, [docEntryId]: meta.length }))
+
+          if (
+            viewRef.current === 'docEdit' &&
+            docFormRef.current?.id === docEntryId &&
+            !docSaveBusyRef.current
+          ) {
+            const currentIds = docImagesRef.current.map(image => image.id).sort().join('|')
+            const baseIds = docImageBaseIdsRef.current.slice().sort().join('|')
+
+            // Nur automatisch nachladen, wenn dieses Gerät seine Bildauswahl nicht lokal verändert hat.
+            if (currentIds === baseIds) {
+              const images = await loadDocEntryImagesFromSupabase(docEntryId)
+              setDocImages(images)
+              setDocImageBaseIds(images.map(image => image.id))
+            }
+          }
+        } catch (e) {
+          setError(`Bild-Synchronisation: ${e.message}`)
+        }
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [cloudUser])
+
+  useEffect(() => {
     if (!cloudUser) { setCloudUpdatedAt(''); return }
     getVaultInfo(cloudUser.id).then(info => {
       const updatedAt = info?.updatedAt || ''
@@ -894,7 +941,7 @@ export default function App() {
 
     try {
       const entries = await listDocEntriesForPrescription(prescription.id)
-      const counts = await getDocEntryImageCountMap(entries.map(entry => entry.id))
+      const counts = await getDocEntryImageCountMapFromSupabase(entries.map(entry => entry.id))
       setSelectedPrescription(prescription)
       setDocEntries(entries)
       setDocEntryImageCounts(counts)
@@ -1725,16 +1772,20 @@ async function handleImportChangeZip(event) {
         return
       }
 
-      // Bilder bleiben in dieser Ausbaustufe noch lokal. Die IDs passen bereits
-      // zum Supabase-Doku-Eintrag, sodass Storage im nächsten Schritt sauber andocken kann.
-      const changedAt = getNowIso()
-      await saveDocEntryImages(saved.id, docImages.map(image => stampForSave(image, changedAt)))
+      const syncedImages = await syncDocEntryImagesToSupabase(
+        saved.id,
+        docImages,
+        cloudUser.id,
+        docImageBaseIds,
+      )
 
       const updatedEntries = await listDocEntriesForPrescription(selectedPrescription.id)
-      const counts = await getDocEntryImageCountMap(updatedEntries.map(entry => entry.id))
+      const counts = await getDocEntryImageCountMapFromSupabase(updatedEntries.map(entry => entry.id))
 
       setDocEntries(updatedEntries)
       setDocEntryImageCounts(counts)
+      setDocImages(syncedImages)
+      setDocImageBaseIds(syncedImages.map(image => image.id))
       setDocForm(saved)
       setDocBaseEntry(saved)
       setDocConflict(null)
@@ -1748,12 +1799,25 @@ async function handleImportChangeZip(event) {
     }
   }
 
-  function handleLoadDocConflict() {
+  async function handleLoadDocConflict() {
     if (!docConflict) return
     setDocForm(docConflict)
     setDocBaseEntry(docConflict)
     setDocConflict(null)
     setError('')
+
+    const currentIds = docImages.map(image => image.id).sort().join('|')
+    const baseIds = docImageBaseIds.slice().sort().join('|')
+    if (currentIds === baseIds) {
+      try {
+        const images = await loadDocEntryImagesFromSupabase(docConflict.id)
+        setDocImages(images)
+        setDocImageBaseIds(images.map(image => image.id))
+      } catch (e) {
+        setError(`Bilder konnten nicht aktualisiert werden: ${e.message}`)
+      }
+    }
+
     setSuccessMessage('Aktueller Stand der Doku wurde geladen.')
   }
 
@@ -2659,6 +2723,7 @@ function openStoredFile(file) {
                       setDocBaseEntry(null)
                       setDocConflict(null)
                       setDocImages([])
+                      setDocImageBaseIds([])
                       setView('docEdit')
                     }}
                   >
@@ -2679,7 +2744,9 @@ function openStoredFile(file) {
                             setDocForm(value)
                             setDocBaseEntry(value)
                             setDocConflict(null)
-                            setDocImages(await getDocEntryImages(value.id))
+                            const images = await loadDocEntryImagesFromSupabase(value.id)
+                            setDocImages(images)
+                            setDocImageBaseIds(images.map(image => image.id))
                             setView('docEdit')
                           }}
                         />
