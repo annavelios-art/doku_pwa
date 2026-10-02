@@ -15,15 +15,17 @@ function rowToImageMeta(row) {
   }
 }
 
-function dataUrlToBlob(dataUrl) {
-  const [header, base64] = String(dataUrl || '').split(',')
+function dataUrlToStorageBlob(dataUrl) {
+  const [, base64] = String(dataUrl || '').split(',')
   if (!base64) throw new Error('Bilddaten sind ungültig.')
-  const match = header.match(/data:([^;]+)/)
-  const mimeType = match?.[1] || 'image/jpeg'
+
   const binary = atob(base64)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
-  return new Blob([bytes], { type: mimeType })
+
+  // Der vorhandene private doku-vault akzeptiert absichtlich nur neutrale
+  // Binärdateien. Den echten Bildtyp speichern wir separat in doc_entry_images.
+  return new Blob([bytes], { type: 'application/octet-stream' })
 }
 
 function blobToDataUrl(blob, mimeType) {
@@ -114,7 +116,7 @@ export async function syncDocEntryImagesToSupabase(docEntryId, images, userId, b
 
     const mimeType = image.mimeType || 'image/jpeg'
     const path = `${userId}/v2-media/doc-images/${docEntryId}/${image.id}.bin`
-    const blob = dataUrlToBlob(image.dataUrl)
+    const blob = dataUrlToStorageBlob(image.dataUrl)
 
     const { error: uploadError } = await supabase.storage
       .from(BUCKET)
