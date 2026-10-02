@@ -31,7 +31,7 @@ import {
   loadDocEntryImagesFromSupabase, syncDocEntryImagesToSupabase,
 } from './lib/supabaseDocImages'
 import {
-  listPatientDocumentsForPatient, loadPatientDocumentFile,
+  listPatientDocumentsForPatient, loadPatientDocumentFile, patientDocumentFromRow,
   savePatientDocumentToSupabase,
 } from './lib/supabasePatientDocuments'
 
@@ -819,45 +819,62 @@ export default function App() {
     const channel = supabase
       .channel('doku-v2-patient-documents')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'patient_documents' }, async payload => {
-        const row = payload.new || payload.old
-        const patientId = row?.patient_id
-        if (!patientId) return
+        if (payload.eventType === 'DELETE') {
+          const removedId = payload.old?.id
+          if (removedId) {
+            setPatientDocuments(current => current.filter(item => item.id !== removedId))
+          }
+          return
+        }
+
+        const incoming = patientDocumentFromRow(payload.new)
+        if (!incoming?.id) return
 
         const selected = selectedPatientRef.current
-        if (!selected || selected.id !== patientId) return
+        if (!selected || selected.id !== incoming.patientId) return
 
-        try {
-          const documents = await listPatientDocumentsForPatient(patientId)
-          setPatientDocuments(documents)
+        setPatientDocuments(current => {
+          if (incoming.deletedAt) {
+            return current.filter(item => item.id !== incoming.id)
+          }
 
-          if (
-            viewRef.current === 'patientDocumentEdit' &&
-            patientDocumentBaseRef.current?.id &&
-            row?.id === patientDocumentBaseRef.current.id &&
-            !patientDocumentSaveBusyRef.current
-          ) {
-            const form = patientDocumentFormRef.current
-            const base = patientDocumentBaseRef.current
-            const dirty =
-              form.documentDate !== base.documentDate ||
-              form.title !== base.title ||
-              form.note !== base.note ||
-              (form.file?.storagePath || '') !== (base.file?.storagePath || '') ||
-              Boolean(form.file?.dataUrl && !form.file?.storagePath)
+          const exists = current.some(item => item.id === incoming.id)
+          const next = exists
+            ? current.map(item => item.id === incoming.id ? incoming : item)
+            : [...current, incoming]
 
-            const incoming = documents.find(item => item.id === row.id)
+          return next.sort((a, b) =>
+            (b.documentDate || '').localeCompare(a.documentDate || '') ||
+            (b.createdAt || '').localeCompare(a.createdAt || '')
+          )
+        })
 
-            if (incoming && dirty && incoming.updatedAt !== base.updatedAt) {
-              setPatientDocumentConflict(incoming)
-            } else if (incoming && !dirty) {
+        if (
+          viewRef.current === 'patientDocumentEdit' &&
+          patientDocumentBaseRef.current?.id === incoming.id &&
+          !patientDocumentSaveBusyRef.current
+        ) {
+          const form = patientDocumentFormRef.current
+          const base = patientDocumentBaseRef.current
+          const dirty =
+            form.documentDate !== base.documentDate ||
+            form.title !== base.title ||
+            form.note !== base.note ||
+            (form.file?.storagePath || '') !== (base.file?.storagePath || '') ||
+            Boolean(form.file?.dataUrl && !form.file?.storagePath)
+
+          if (dirty && incoming.updatedAt !== base.updatedAt) {
+            setPatientDocumentConflict(incoming)
+          } else if (!dirty) {
+            try {
               const loaded = await loadPatientDocumentFile(incoming)
               setPatientDocumentForm(loaded)
               setPatientDocumentBase(incoming)
               setPatientDocumentConflict(null)
+            } catch (e) {
+              setError(`Dokument konnte nicht aktualisiert werden: ${e.message}`)
             }
           }
-        } catch (e) {
-          setError(`Dokument-Synchronisation: ${e.message}`)
         }
       })
       .subscribe()
