@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 
 const BUCKET = 'doku-vault'
 
-function rowToDocument(row) {
+export function patientDocumentFromRow(row) {
   if (!row) return null
   return {
     id: row.id,
@@ -50,7 +50,7 @@ async function getDocumentRow(id) {
     .single()
 
   if (error) throw error
-  return rowToDocument(data)
+  return patientDocumentFromRow(data)
 }
 
 export async function listPatientDocumentsForPatient(patientId) {
@@ -148,7 +148,7 @@ export async function savePatientDocumentToSupabase(
       throw error
     }
 
-    return { document: rowToDocument(data), conflict: null }
+    return { document: patientDocumentFromRow(data), conflict: null }
   }
 
   const updatedAt = new Date().toISOString()
@@ -187,5 +187,5 @@ export async function savePatientDocumentToSupabase(
     if (removeError) throw removeError
   }
 
-  return { document: rowToDocument(data), conflict: null }
+  return { document: patientDocumentFromRow(data), conflict: null }
 }
