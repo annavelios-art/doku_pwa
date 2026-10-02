@@ -67,7 +67,13 @@ export async function savePatientToSupabase(patient, userId, expectedUpdatedAt =
       .select('id,first_name,last_name,birth_date,created_at,updated_at,deleted_at')
       .single()
 
-    if (error) throw error
+    if (error) {
+      if (error.code === '23505' && patient.id) {
+        const current = await getPatientFromSupabase(patient.id)
+        return { patient: current, conflict: null }
+      }
+      throw error
+    }
     return { patient: patientFromRow(data), conflict: null }
   }
 
