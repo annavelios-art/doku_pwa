@@ -36,12 +36,12 @@ export async function getPrescriptionFromSupabase(id) {
   return prescriptionFromRow(data)
 }
 
-export async function savePrescriptionToSupabase(prescription, patientId, userId, expectedUpdatedAt = '') {
-  if (!prescription.id) {
+export async function savePrescriptionToSupabase(prescription, patientId, userId, expectedUpdatedAt = '', mode = 'auto') {
+  if (mode === 'insert' || !prescription.id) {
     const { data, error } = await supabase
       .from('prescriptions')
       .insert({
-        id: crypto.randomUUID(),
+        id: prescription.id || crypto.randomUUID(),
         patient_id: patientId,
         prescription_date: prescription.issueDate || null,
         remedy: prescription.remedy?.trim() || '',
