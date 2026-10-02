@@ -46,6 +46,10 @@ import {
   getCachedPatient, getCachedPatients, getCachedPrescriptions, getOutboxCount,
   getOutboxItems, markOutboxConflict, removeOutboxItem,
 } from './lib/v2OfflineDb'
+import {
+  createPracticeKeyBundle, decryptPracticeText, encryptPracticeText,
+  unlockPracticeKey, unlockPracticeKeyWithRecovery, V2_CRYPTO_PARAMETERS,
+} from './lib/v2Crypto'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -93,6 +97,7 @@ const AUTO_SYNC_DEBOUNCE_MS = 8000
 const AUTO_SYNC_POLL_MS = 20000
 const ENCRYPTION_ITERATIONS = 100000
 const APP_VERSION = '2026-07-17-backup-v2'
+const V2_CRYPTO_LAB_STORAGE_KEY = 'physiooptima-v2-crypto-lab'
 
 const BACKUP_ARRAY_KEYS = [
   'patients',
@@ -491,6 +496,18 @@ export default function App() {
   const [migrationPreview, setMigrationPreview] = useState(null)
   const [migrationBusy, setMigrationBusy] = useState(false)
   const [migrationProgress, setMigrationProgress] = useState('')
+  const [cryptoLabConfigured, setCryptoLabConfigured] = useState(
+    () => Boolean(window.localStorage.getItem(V2_CRYPTO_LAB_STORAGE_KEY)),
+  )
+  const [cryptoPassphrase, setCryptoPassphrase] = useState('')
+  const [cryptoPassphraseConfirm, setCryptoPassphraseConfirm] = useState('')
+  const [cryptoRecoveryCode, setCryptoRecoveryCode] = useState('')
+  const [cryptoRecoveryInput, setCryptoRecoveryInput] = useState('')
+  const [cryptoUnlocked, setCryptoUnlocked] = useState(false)
+  const [cryptoBusy, setCryptoBusy] = useState(false)
+  const [cryptoTestText, setCryptoTestText] = useState('Testpatient Max Muster – Schulter rechts.')
+  const [cryptoCipherPreview, setCryptoCipherPreview] = useState('')
+  const [cryptoDecryptedText, setCryptoDecryptedText] = useState('')
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -498,6 +515,7 @@ export default function App() {
   const changeZipImportRef = useRef(null)
   const migrationInputRef = useRef(null)
   const migrationBackupRef = useRef(null)
+  const cryptoPracticeKeyRef = useRef(null)
   const [userRole, setUserRole] = useState(() => window.localStorage.getItem('pwaUserRole') || USER_ROLES.OWNER)
   const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
   const [lastModifiedAt, setLastModifiedAt] = useState(() => readStoredTimestamp(LAST_MODIFIED_STORAGE_KEY))
@@ -1867,6 +1885,153 @@ async function handleImportChangeZip(event) {
 
 
 
+  function readCryptoLabBundle() {
+    const raw = window.localStorage.getItem(V2_CRYPTO_LAB_STORAGE_KEY)
+    if (!raw) throw new Error('Noch kein Test-Praxisschlüssel angelegt.')
+    return JSON.parse(raw)
+  }
+
+  async function handleCreateCryptoLab(event) {
+    event.preventDefault()
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (cryptoPassphrase !== cryptoPassphraseConfirm) {
+        throw new Error('Die beiden Test-Passphrasen stimmen nicht überein.')
+      }
+
+      const bundle = await createPracticeKeyBundle(cryptoPassphrase)
+      window.localStorage.setItem(
+        V2_CRYPTO_LAB_STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          passwordEnvelope: bundle.passwordEnvelope,
+          recoveryEnvelope: bundle.recoveryEnvelope,
+          createdAt: getNowIso(),
+        }),
+      )
+
+      cryptoPracticeKeyRef.current = bundle.practiceKey
+      setCryptoLabConfigured(true)
+      setCryptoUnlocked(true)
+      setCryptoRecoveryCode(bundle.recoveryCode)
+      setCryptoRecoveryInput('')
+      setCryptoPassphrase('')
+      setCryptoPassphraseConfirm('')
+      setCryptoCipherPreview('')
+      setCryptoDecryptedText('')
+      setSuccessMessage('Test-Praxisschlüssel erzeugt. Noch wurden keinerlei Patientendaten verschlüsselt oder übertragen.')
+    } catch (e) {
+      setError(`Verschlüsselungstest: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  async function handleUnlockCryptoLab(event) {
+    event.preventDefault()
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      const stored = readCryptoLabBundle()
+      const key = await unlockPracticeKey(cryptoPassphrase, stored.passwordEnvelope)
+      cryptoPracticeKeyRef.current = key
+      setCryptoUnlocked(true)
+      setCryptoPassphrase('')
+      setSuccessMessage('Test-Praxisschlüssel entsperrt. Er liegt nur im Arbeitsspeicher dieser Sitzung.')
+    } catch (e) {
+      setError(`Entsperren fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  async function handleUnlockCryptoLabRecovery() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      const stored = readCryptoLabBundle()
+      const key = await unlockPracticeKeyWithRecovery(
+        cryptoRecoveryInput,
+        stored.recoveryEnvelope,
+      )
+      cryptoPracticeKeyRef.current = key
+      setCryptoUnlocked(true)
+      setSuccessMessage('Test-Praxisschlüssel mit Wiederherstellungsschlüssel entsperrt.')
+    } catch (e) {
+      setError(`Wiederherstellung fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  async function handleCryptoRoundTrip() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (!cryptoPracticeKeyRef.current) {
+        throw new Error('Bitte den Test-Praxisschlüssel zuerst entsperren.')
+      }
+
+      const encrypted = await encryptPracticeText(
+        cryptoTestText,
+        cryptoPracticeKeyRef.current,
+      )
+      const decrypted = await decryptPracticeText(
+        encrypted,
+        cryptoPracticeKeyRef.current,
+      )
+
+      if (decrypted !== cryptoTestText) {
+        throw new Error('Kontrolltest fehlgeschlagen: entschlüsselter Text stimmt nicht überein.')
+      }
+
+      const serialized = JSON.stringify(encrypted)
+      setCryptoCipherPreview(
+        serialized.length > 260 ? `${serialized.slice(0, 260)}…` : serialized,
+      )
+      setCryptoDecryptedText(decrypted)
+      setSuccessMessage('AES-GCM-Test bestanden: Testtext wurde verschlüsselt und unverändert wieder entschlüsselt.')
+    } catch (e) {
+      setError(`Verschlüsselungstest fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  function handleLockCryptoLab() {
+    cryptoPracticeKeyRef.current = null
+    setCryptoUnlocked(false)
+    setCryptoCipherPreview('')
+    setCryptoDecryptedText('')
+    setSuccessMessage('Test-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
+  }
+
+  function handleResetCryptoLab() {
+    if (!window.confirm('Nur den lokalen Verschlüsselungstest zurücksetzen? Es sind keine Patientendaten daran gebunden.')) return
+
+    window.localStorage.removeItem(V2_CRYPTO_LAB_STORAGE_KEY)
+    cryptoPracticeKeyRef.current = null
+    setCryptoLabConfigured(false)
+    setCryptoUnlocked(false)
+    setCryptoPassphrase('')
+    setCryptoPassphraseConfirm('')
+    setCryptoRecoveryCode('')
+    setCryptoRecoveryInput('')
+    setCryptoCipherPreview('')
+    setCryptoDecryptedText('')
+    setError('')
+    setSuccessMessage('Lokaler Verschlüsselungstest wurde zurückgesetzt.')
+  }
+
   async function handleSelectMigrationZip(event) {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -2995,6 +3160,145 @@ function openStoredFile(file) {
                   )}
                   <p className="muted">Das Verschlüsselungspasswort verlässt dieses Gerät nicht. Für automatische Synchronisation bleibt es nur bis zum Schließen der PWA im Arbeitsspeicher.</p>
                 </div>
+
+                {isOwner && (
+                  <div className="backup-card">
+                    <h3>🔐 V2-Verschlüsselungslabor</h3>
+                    <p>
+                      Rein lokaler Test des zukünftigen Praxisschlüssels. Diese Karte schreibt nichts nach Supabase
+                      und verändert keine Patienten-, Doku- oder Dateidaten.
+                    </p>
+
+                    <p className="muted">
+                      Technik: <strong>{V2_CRYPTO_PARAMETERS.algorithm}</strong> ·
+                      {' '}{V2_CRYPTO_PARAMETERS.kdf} ·
+                      {' '}{V2_CRYPTO_PARAMETERS.iterations.toLocaleString('de-DE')} Ableitungsrunden
+                    </p>
+
+                    {!cryptoLabConfigured ? (
+                      <form className="stack-sm" onSubmit={handleCreateCryptoLab}>
+                        <input
+                          className="field"
+                          type="password"
+                          autoComplete="new-password"
+                          placeholder="Test-Passphrase (mindestens 12 Zeichen)"
+                          value={cryptoPassphrase}
+                          onChange={event => setCryptoPassphrase(event.target.value)}
+                          required
+                        />
+                        <input
+                          className="field"
+                          type="password"
+                          autoComplete="new-password"
+                          placeholder="Test-Passphrase wiederholen"
+                          value={cryptoPassphraseConfirm}
+                          onChange={event => setCryptoPassphraseConfirm(event.target.value)}
+                          required
+                        />
+                        <button className="btn btn-secondary" disabled={cryptoBusy}>
+                          {cryptoBusy ? 'Erzeuge Schlüssel …' : 'Test-Praxisschlüssel erzeugen'}
+                        </button>
+                        <p className="muted">
+                          Bitte hier noch nicht dein endgültiges Praxis-Passwort verwenden. Dies ist nur das Labor.
+                        </p>
+                      </form>
+                    ) : (
+                      <div className="stack-sm">
+                        {!cryptoUnlocked ? (
+                          <>
+                            <form className="stack-sm" onSubmit={handleUnlockCryptoLab}>
+                              <input
+                                className="field"
+                                type="password"
+                                autoComplete="current-password"
+                                placeholder="Test-Passphrase"
+                                value={cryptoPassphrase}
+                                onChange={event => setCryptoPassphrase(event.target.value)}
+                                required
+                              />
+                              <button className="btn btn-secondary" disabled={cryptoBusy}>
+                                {cryptoBusy ? 'Entsperre …' : 'Test-Praxisschlüssel entsperren'}
+                              </button>
+                            </form>
+
+                            <div className="stack-sm">
+                              <input
+                                className="field"
+                                placeholder="Wiederherstellungsschlüssel"
+                                value={cryptoRecoveryInput}
+                                onChange={event => setCryptoRecoveryInput(event.target.value)}
+                              />
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={handleUnlockCryptoLabRecovery}
+                                disabled={cryptoBusy || !cryptoRecoveryInput.trim()}
+                              >
+                                Mit Wiederherstellungsschlüssel entsperren
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="sync-status sync-status-active">
+                              <strong>Test-Praxisschlüssel entsperrt</strong>
+                              <span>Der Schlüssel liegt nur im Arbeitsspeicher dieser geöffneten PWA.</span>
+                            </div>
+
+                            <textarea
+                              className="field"
+                              rows="3"
+                              value={cryptoTestText}
+                              onChange={event => setCryptoTestText(event.target.value)}
+                            />
+
+                            <button
+                              type="button"
+                              className="btn btn-green"
+                              onClick={handleCryptoRoundTrip}
+                              disabled={cryptoBusy}
+                            >
+                              {cryptoBusy ? 'Teste …' : 'Testtext verschlüsseln + entschlüsseln'}
+                            </button>
+
+                            {cryptoCipherPreview && (
+                              <div className="sync-status">
+                                <strong>So sieht nur der Chiffretext aus</strong>
+                                <span style={{ overflowWrap: 'anywhere' }}>{cryptoCipherPreview}</span>
+                              </div>
+                            )}
+
+                            {cryptoDecryptedText && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Wieder entschlüsselt</strong>
+                                <span>{cryptoDecryptedText}</span>
+                              </div>
+                            )}
+
+                            <button type="button" className="btn btn-ghost" onClick={handleLockCryptoLab}>
+                              Test-Praxisschlüssel sperren
+                            </button>
+                          </>
+                        )}
+
+                        {cryptoRecoveryCode && (
+                          <div className="sync-status">
+                            <strong>Wiederherstellungsschlüssel – nur für diesen Test</strong>
+                            <span style={{ overflowWrap: 'anywhere' }}>{cryptoRecoveryCode}</span>
+                            <span>
+                              Er wird nur direkt nach dem Erzeugen angezeigt. Für den späteren echten Schlüssel
+                              bauen wir dafür einen sicheren Datei-/Druck-Export.
+                            </span>
+                          </div>
+                        )}
+
+                        <button type="button" className="btn btn-ghost" onClick={handleResetCryptoLab}>
+                          Verschlüsselungstest zurücksetzen
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {isOwner && (
                   <div className="backup-card">
