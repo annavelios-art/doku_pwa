@@ -30,6 +30,10 @@ import {
   getDocEntryImageCountMapFromSupabase, listDocEntryImageMeta,
   loadDocEntryImagesFromSupabase, syncDocEntryImagesToSupabase,
 } from './lib/supabaseDocImages'
+import {
+  listPatientDocumentsForPatient, loadPatientDocumentFile,
+  savePatientDocumentToSupabase,
+} from './lib/supabasePatientDocuments'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -443,6 +447,8 @@ export default function App() {
   const [docForm, setDocForm] = useState(EMPTY_DOC_FORM)
   const [libraryForm, setLibraryForm] = useState(EMPTY_LIBRARY_FORM)
   const [patientDocumentForm, setPatientDocumentForm] = useState(EMPTY_PATIENT_DOCUMENT_FORM)
+  const [patientDocumentConflict, setPatientDocumentConflict] = useState(null)
+  const [patientDocumentBase, setPatientDocumentBase] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -488,6 +494,9 @@ export default function App() {
   const docSaveBusyRef = useRef(false)
   const docImagesRef = useRef([])
   const docImageBaseIdsRef = useRef([])
+  const patientDocumentFormRef = useRef(EMPTY_PATIENT_DOCUMENT_FORM)
+  const patientDocumentBaseRef = useRef(null)
+  const patientDocumentSaveBusyRef = useRef(false)
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
   const canManageTrash = isOwner && Boolean(cloudUser)
@@ -530,8 +539,10 @@ export default function App() {
     docBaseEntryRef.current = docBaseEntry
     docImagesRef.current = docImages
     docImageBaseIdsRef.current = docImageBaseIds
+    patientDocumentFormRef.current = patientDocumentForm
+    patientDocumentBaseRef.current = patientDocumentBase
     viewRef.current = view
-  }, [selectedPatient, patientForm, selectedPrescription, prescriptionForm, docForm, docBaseEntry, docImages, docImageBaseIds, view])
+  }, [selectedPatient, patientForm, selectedPrescription, prescriptionForm, docForm, docBaseEntry, docImages, docImageBaseIds, patientDocumentForm, patientDocumentBase, view])
 
   useEffect(() => {
     if (cloudUser) loadListData()
@@ -803,6 +814,58 @@ export default function App() {
   }, [cloudUser])
 
   useEffect(() => {
+    if (!cloudUser) return undefined
+
+    const channel = supabase
+      .channel('doku-v2-patient-documents')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'patient_documents' }, async payload => {
+        const row = payload.new || payload.old
+        const patientId = row?.patient_id
+        if (!patientId) return
+
+        const selected = selectedPatientRef.current
+        if (!selected || selected.id !== patientId) return
+
+        try {
+          const documents = await listPatientDocumentsForPatient(patientId)
+          setPatientDocuments(documents)
+
+          if (
+            viewRef.current === 'patientDocumentEdit' &&
+            patientDocumentBaseRef.current?.id &&
+            row?.id === patientDocumentBaseRef.current.id &&
+            !patientDocumentSaveBusyRef.current
+          ) {
+            const form = patientDocumentFormRef.current
+            const base = patientDocumentBaseRef.current
+            const dirty =
+              form.documentDate !== base.documentDate ||
+              form.title !== base.title ||
+              form.note !== base.note ||
+              (form.file?.storagePath || '') !== (base.file?.storagePath || '') ||
+              Boolean(form.file?.dataUrl && !form.file?.storagePath)
+
+            const incoming = documents.find(item => item.id === row.id)
+
+            if (incoming && dirty && incoming.updatedAt !== base.updatedAt) {
+              setPatientDocumentConflict(incoming)
+            } else if (incoming && !dirty) {
+              const loaded = await loadPatientDocumentFile(incoming)
+              setPatientDocumentForm(loaded)
+              setPatientDocumentBase(incoming)
+              setPatientDocumentConflict(null)
+            }
+          }
+        } catch (e) {
+          setError(`Dokument-Synchronisation: ${e.message}`)
+        }
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [cloudUser])
+
+  useEffect(() => {
     if (!cloudUser) { setCloudUpdatedAt(''); return }
     getVaultInfo(cloudUser.id).then(info => {
       const updatedAt = info?.updatedAt || ''
@@ -914,7 +977,7 @@ export default function App() {
 
       const [patientPrescriptions, documents] = await Promise.all([
         listPrescriptionsForPatient(patientId),
-        getPatientDocumentsByPatientId(patientId),
+        listPatientDocumentsForPatient(patientId),
       ])
 
       setSelectedPatient(patient)
@@ -931,7 +994,7 @@ export default function App() {
 
   async function reloadPatientDocuments(patientId = selectedPatient?.id) {
     if (!patientId) return
-    setPatientDocuments(await getPatientDocumentsByPatientId(patientId))
+    setPatientDocuments(await listPatientDocumentsForPatient(patientId))
   }
 
   async function loadPrescriptionDetail(prescription) {
@@ -1854,27 +1917,60 @@ async function handleImportChangeZip(event) {
 
     setSaving(true)
     setError('')
+    setSuccessMessage('')
+    patientDocumentSaveBusyRef.current = true
 
     try {
       if (!patientDocumentForm.documentDate) throw new Error('Bitte Datum ausfüllen.')
       if (!patientDocumentForm.title.trim()) throw new Error('Bitte eine kurze Überschrift eintragen.')
-      //if (!patientDocumentForm.file) throw new Error('Bitte eine Datei auswählen.')
+      if (!cloudUser) throw new Error('Bitte erneut anmelden.')
+      if (patientDocumentConflict) {
+        throw new Error('Dieses Dokument wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
+      }
 
-      const changedAt = markDataChanged()
-      await savePatientDocument(stampForSave({
-        ...patientDocumentForm,
-        patientId: selectedPatient.id,
-        title: patientDocumentForm.title.trim(),
-        note: patientDocumentForm.note.trim(),
-      }, changedAt))
+      const { document: saved, conflict } = await savePatientDocumentToSupabase(
+        {
+          ...patientDocumentForm,
+          id: patientDocumentBase?.id || patientDocumentForm.id || '',
+          title: patientDocumentForm.title.trim(),
+          note: patientDocumentForm.note.trim(),
+        },
+        selectedPatient.id,
+        cloudUser.id,
+        patientDocumentBase?.updatedAt || '',
+      )
+
+      if (conflict) {
+        setPatientDocumentConflict(conflict)
+        setError('Dieses Dokument wurde inzwischen auf einem anderen Gerät geändert. Deine Eingaben bleiben erhalten.')
+        return
+      }
 
       await reloadPatientDocuments(selectedPatient.id)
+      setPatientDocumentConflict(null)
+      setPatientDocumentBase(saved)
+      setPatientDocumentForm(saved)
       setView('patientDetail')
-      setSuccessMessage('Dokument/Befund wurde gespeichert.')
+      setSuccessMessage('Dokument/Befund gespeichert und synchronisiert.')
     } catch (e) {
       setError(e.message)
     } finally {
+      patientDocumentSaveBusyRef.current = false
       setSaving(false)
+    }
+  }
+
+  async function handleLoadPatientDocumentConflict() {
+    if (!patientDocumentConflict) return
+    try {
+      const loaded = await loadPatientDocumentFile(patientDocumentConflict)
+      setPatientDocumentForm(loaded)
+      setPatientDocumentBase(patientDocumentConflict)
+      setPatientDocumentConflict(null)
+      setError('')
+      setSuccessMessage('Aktueller Stand des Dokuments wurde geladen.')
+    } catch (e) {
+      setError(`Dokument konnte nicht geladen werden: ${e.message}`)
     }
   }
 
@@ -2613,6 +2709,8 @@ function openStoredFile(file) {
                             ...EMPTY_PATIENT_DOCUMENT_FORM,
                             documentDate: todayIso(),
                           })
+                          setPatientDocumentBase(null)
+                          setPatientDocumentConflict(null)
                           setView('patientDocumentEdit')
                         }}
                       >
@@ -2633,9 +2731,16 @@ function openStoredFile(file) {
                             note={item.note}
                             file={item.file}
                             tone="patient"
-                            onOpen={() => {
-  setPatientDocumentForm(item)
-  setView('patientDocumentEdit')
+                            onOpen={async () => {
+  try {
+    const loaded = await loadPatientDocumentFile(item)
+    setPatientDocumentForm(loaded)
+    setPatientDocumentBase(item)
+    setPatientDocumentConflict(null)
+    setView('patientDocumentEdit')
+  } catch (e) {
+    setError(`Dokument konnte nicht geladen werden: ${e.message}`)
+  }
 }}
                           />
                         ))
@@ -2845,7 +2950,20 @@ function openStoredFile(file) {
                     Abbrechen
                   </button>
 
-                  <h2 className="section-title">Neues Dokument / neuer Befund</h2>
+                  <h2 className="section-title">{patientDocumentBase ? 'Dokument / Befund bearbeiten' : 'Neues Dokument / neuer Befund'}</h2>
+
+                  {patientDocumentConflict && (
+                    <div className="sync-conflict-box">
+                      <strong>Änderung auf einem anderen Gerät erkannt.</strong>
+                      <p>Deine offenen Eingaben wurden nicht überschrieben.</p>
+                      <p>
+                        Aktueller Stand: {formatDate(patientDocumentConflict.documentDate)} · {patientDocumentConflict.title}
+                      </p>
+                      <button type="button" className="btn btn-ghost" onClick={handleLoadPatientDocumentConflict}>
+                        Aktuellen Stand laden
+                      </button>
+                    </div>
+                  )}
 
               <DateInput
   		value={patientDocumentForm.documentDate}
@@ -2938,7 +3056,7 @@ function openStoredFile(file) {
 
                   <div className="row-end">
                     <button type="button" className="btn btn-ghost" onClick={() => setView('patientDetail')}>Abbrechen</button>
-                    <button className="btn btn-primary" disabled={saving}>
+                    <button className="btn btn-primary" disabled={saving || Boolean(patientDocumentConflict)}>
                       <Save size={16} />
                       {saving ? 'Speichern...' : 'Speichern'}
                     </button>
