@@ -63,7 +63,7 @@ export async function listPatientDocumentsForPatient(patientId) {
     .order('created_at', { ascending: false })
 
   if (error) throw error
-  return (data || []).map(rowToDocument)
+  return (data || []).map(patientDocumentFromRow)
 }
 
 export async function loadPatientDocumentFile(document) {
