@@ -50,7 +50,13 @@ export async function savePrescriptionToSupabase(prescription, patientId, userId
       .select('id,patient_id,prescription_date,remedy,created_at,updated_at,deleted_at')
       .single()
 
-    if (error) throw error
+    if (error) {
+      if (error.code === '23505' && prescription.id) {
+        const current = await getPrescriptionFromSupabase(prescription.id)
+        return { prescription: current, conflict: null }
+      }
+      throw error
+    }
     return { prescription: prescriptionFromRow(data), conflict: null }
   }
 
