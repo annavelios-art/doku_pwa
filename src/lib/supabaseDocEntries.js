@@ -51,7 +51,13 @@ export async function saveDocEntryToSupabase(entry, prescriptionId, userId, expe
       .select('id,prescription_id,entry_date,text,created_at,updated_at,deleted_at')
       .single()
 
-    if (error) throw error
+    if (error) {
+      if (error.code === '23505' && entry.id) {
+        const current = await getDocEntryFromSupabase(entry.id)
+        return { entry: current, conflict: null }
+      }
+      throw error
+    }
     return { entry: docEntryFromRow(data), conflict: null }
   }
 
