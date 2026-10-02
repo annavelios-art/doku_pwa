@@ -38,6 +38,9 @@ import {
   libraryItemFromRow, listLibraryItems, loadLibraryItemFile, saveLibraryItemToSupabase,
 } from './lib/supabaseLibrary'
 import {
+  inspectLegacyBackup, migrateLegacyBackupToSupabase,
+} from './lib/supabaseMigration'
+import {
   cacheDocEntries, cacheDocEntry, cachePatient, cachePatients,
   cachePrescription, cachePrescriptions, enqueueOutbox, getCachedDocEntries,
   getCachedPatient, getCachedPatients, getCachedPrescriptions, getOutboxCount,
@@ -485,11 +488,16 @@ export default function App() {
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [outboxCount, setOutboxCount] = useState(0)
+  const [migrationPreview, setMigrationPreview] = useState(null)
+  const [migrationBusy, setMigrationBusy] = useState(false)
+  const [migrationProgress, setMigrationProgress] = useState('')
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
   const changeImportRef = useRef(null)
   const changeZipImportRef = useRef(null)
+  const migrationInputRef = useRef(null)
+  const migrationBackupRef = useRef(null)
   const [userRole, setUserRole] = useState(() => window.localStorage.getItem('pwaUserRole') || USER_ROLES.OWNER)
   const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
   const [lastModifiedAt, setLastModifiedAt] = useState(() => readStoredTimestamp(LAST_MODIFIED_STORAGE_KEY))
@@ -1859,6 +1867,104 @@ async function handleImportChangeZip(event) {
 
 
 
+  async function handleSelectMigrationZip(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setError('')
+    setSuccessMessage('')
+    setMigrationProgress('')
+    migrationBackupRef.current = null
+
+    try {
+      const isZip = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip'
+      const text = isZip ? await readBackupJsonFromZip(file) : await file.text()
+      const backup = JSON.parse(text)
+      const inspection = inspectLegacyBackup(backup)
+
+      migrationBackupRef.current = inspection.valid ? backup : null
+      setMigrationPreview({
+        fileName: file.name,
+        valid: inspection.valid,
+        counts: inspection.counts,
+        blockingIssues: inspection.blockingIssues,
+        exportedAt: inspection.exportedAt,
+        version: inspection.version,
+      })
+
+      if (inspection.valid) {
+        setSuccessMessage('Migrations-ZIP geprüft. Noch wurde nichts nach Supabase übertragen.')
+      } else {
+        setError('Diese ZIP kann noch nicht migriert werden. Bitte die angezeigten Prüfpunkte beachten.')
+      }
+    } catch (e) {
+      setMigrationPreview(null)
+      setError(`Migrations-ZIP konnte nicht geprüft werden: ${e.message}`)
+    }
+  }
+
+  async function handleRunMigration() {
+    if (!migrationPreview?.valid || !migrationBackupRef.current) {
+      setError('Bitte zuerst ein gültiges Voll-ZIP auswählen und prüfen.')
+      return
+    }
+    if (!cloudUser) {
+      setError('Bitte zuerst anmelden.')
+      return
+    }
+    if (!navigator.onLine) {
+      setError('Die Migration braucht eine Internetverbindung.')
+      return
+    }
+    if (outboxCount > 0) {
+      setError(`Vor der Migration bitte erst die ${outboxCount} wartenden Offline-Änderungen synchronisieren.`)
+      return
+    }
+    if (autoSyncPassword) {
+      setError('Bitte die alte automatische Cloud-Synchronisation vor der Migration beenden.')
+      return
+    }
+
+    const counts = migrationPreview.counts
+    const confirmed = window.confirm(
+      `Migration starten?\n\n` +
+      `${counts.patients} Patienten\n` +
+      `${counts.prescriptions} Verordnungen\n` +
+      `${counts.documentationEntries} Doku-Einträge\n` +
+      `${counts.images} Doku-Bilder\n` +
+      `${counts.patientDocuments} Befunde/Dokumente\n` +
+      `${counts.libraryItems} Bibliotheksdateien\n\n` +
+      'Vorhandene gleiche IDs werden aktualisiert, nicht dupliziert.'
+    )
+    if (!confirmed) return
+
+    setMigrationBusy(true)
+    setError('')
+    setSuccessMessage('')
+    setMigrationProgress('Migration startet …')
+
+    try {
+      const result = await migrateLegacyBackupToSupabase(
+        migrationBackupRef.current,
+        cloudUser.id,
+        setMigrationProgress,
+      )
+
+      await loadListData()
+      setMigrationProgress('Migration vollständig geprüft.')
+      setSuccessMessage(
+        `Migration abgeschlossen: ${result.total} Einträge wurden geprüft und nach Supabase übernommen.`
+      )
+    } catch (e) {
+      setError(
+        `Migration angehalten: ${e.message} Die gleiche ZIP kann nach der Korrektur erneut gestartet werden.`
+      )
+    } finally {
+      setMigrationBusy(false)
+    }
+  }
+
   async function handleImportFile(event) {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -2889,6 +2995,76 @@ function openStoredFile(file) {
                   )}
                   <p className="muted">Das Verschlüsselungspasswort verlässt dieses Gerät nicht. Für automatische Synchronisation bleibt es nur bis zum Schließen der PWA im Arbeitsspeicher.</p>
                 </div>
+
+                {isOwner && (
+                  <div className="backup-card">
+                    <h3>Einmalige Migration: altes ZIP → Supabase</h3>
+                    <p>
+                      Prüft ein vorhandenes vollständiges ZIP-Backup und übernimmt danach Patienten, Verordnungen,
+                      Doku, Bilder, Befunde und Bibliothek in die neue Supabase-Struktur.
+                    </p>
+
+                    <div className="stack-sm">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => migrationInputRef.current?.click()}
+                        disabled={migrationBusy}
+                      >
+                        Altes Voll-ZIP auswählen und prüfen
+                      </button>
+
+                      <input
+                        ref={migrationInputRef}
+                        type="file"
+                        accept=".json,.zip,application/json,application/zip"
+                        className="hidden"
+                        onChange={handleSelectMigrationZip}
+                      />
+
+                      {migrationPreview && (
+                        <div className="sync-status">
+                          <strong>{migrationPreview.valid ? 'ZIP-Prüfung bestanden' : 'ZIP-Prüfung nicht bestanden'}</strong>
+                          <span>{migrationPreview.fileName}</span>
+                          <span>
+                            Patienten: {migrationPreview.counts?.patients || 0} ·
+                            {' '}Verordnungen: {migrationPreview.counts?.prescriptions || 0} ·
+                            {' '}Doku: {migrationPreview.counts?.documentationEntries || 0}
+                          </span>
+                          <span>
+                            Bilder: {migrationPreview.counts?.images || 0} ·
+                            {' '}Befunde: {migrationPreview.counts?.patientDocuments || 0} ·
+                            {' '}Bibliothek: {migrationPreview.counts?.libraryItems || 0}
+                          </span>
+
+                          {migrationPreview.blockingIssues?.map((issue, index) => (
+                            <span key={index}>⚠️ {issue}</span>
+                          ))}
+                        </div>
+                      )}
+
+                      {migrationProgress && (
+                        <p className="muted"><strong>Status:</strong> {migrationProgress}</p>
+                      )}
+
+                      {migrationPreview?.valid && (
+                        <button
+                          type="button"
+                          className="btn btn-green"
+                          onClick={handleRunMigration}
+                          disabled={migrationBusy}
+                        >
+                          {migrationBusy ? 'Migration läuft …' : 'Migration nach Supabase starten'}
+                        </button>
+                      )}
+                    </div>
+
+                    <p className="muted">
+                      Für den Test bitte nur ein Backup mit Fantasie-/Testdaten verwenden. Das echte Praxis-Backup bleibt
+                      bis zur Sicherheits-Endrunde unangetastet.
+                    </p>
+                  </div>
+                )}
 
                 <div className="backup-card">
                   <h3>Komplettes ZIP-Backup</h3>
