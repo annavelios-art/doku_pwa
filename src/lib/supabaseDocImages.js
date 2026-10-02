@@ -85,12 +85,15 @@ export async function getDocEntryImageCountMapFromSupabase(entryIds) {
   return map
 }
 
-export async function syncDocEntryImagesToSupabase(docEntryId, images, userId) {
+export async function syncDocEntryImagesToSupabase(docEntryId, images, userId, baseImageIds = []) {
   const existing = await listDocEntryImageMeta(docEntryId)
   const wantedIds = new Set((images || []).map(image => image.id))
+  const baseIds = new Set(baseImageIds || [])
 
+  // Nur Bilder löschen, die beim Öffnen dieses Editors tatsächlich vorhanden waren
+  // und die hier bewusst entfernt wurden. Remote neu hinzugekommene Bilder bleiben erhalten.
   for (const item of existing) {
-    if (wantedIds.has(item.id)) continue
+    if (!baseIds.has(item.id) || wantedIds.has(item.id)) continue
 
     const deletedAt = new Date().toISOString()
     const { error: rowError } = await supabase
