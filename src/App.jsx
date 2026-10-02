@@ -34,6 +34,9 @@ import {
   listPatientDocumentsForPatient, loadPatientDocumentFile, patientDocumentFromRow,
   savePatientDocumentToSupabase,
 } from './lib/supabasePatientDocuments'
+import {
+  libraryItemFromRow, listLibraryItems, loadLibraryItemFile, saveLibraryItemToSupabase,
+} from './lib/supabaseLibrary'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -497,6 +500,7 @@ export default function App() {
   const patientDocumentFormRef = useRef(EMPTY_PATIENT_DOCUMENT_FORM)
   const patientDocumentBaseRef = useRef(null)
   const patientDocumentSaveBusyRef = useRef(false)
+  const libraryCategoryRef = useRef('nachbehandlung')
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
   const canManageTrash = isOwner && Boolean(cloudUser)
@@ -541,8 +545,9 @@ export default function App() {
     docImageBaseIdsRef.current = docImageBaseIds
     patientDocumentFormRef.current = patientDocumentForm
     patientDocumentBaseRef.current = patientDocumentBase
+    libraryCategoryRef.current = libraryCategory
     viewRef.current = view
-  }, [selectedPatient, patientForm, selectedPrescription, prescriptionForm, docForm, docBaseEntry, docImages, docImageBaseIds, patientDocumentForm, patientDocumentBase, view])
+  }, [selectedPatient, patientForm, selectedPrescription, prescriptionForm, docForm, docBaseEntry, docImages, docImageBaseIds, patientDocumentForm, patientDocumentBase, libraryCategory, view])
 
   useEffect(() => {
     if (cloudUser) loadListData()
@@ -883,6 +888,39 @@ export default function App() {
   }, [cloudUser])
 
   useEffect(() => {
+    if (!cloudUser) return undefined
+
+    const channel = supabase
+      .channel('doku-v2-library-items')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'library_items' }, payload => {
+        if (payload.eventType === 'DELETE') {
+          const removedId = payload.old?.id
+          if (removedId) setLibraryItems(current => current.filter(item => item.id !== removedId))
+          return
+        }
+
+        const incoming = libraryItemFromRow(payload.new)
+        if (!incoming?.id || incoming.category !== libraryCategoryRef.current) return
+
+        setLibraryItems(current => {
+          if (incoming.deletedAt) {
+            return current.filter(item => item.id !== incoming.id)
+          }
+
+          const exists = current.some(item => item.id === incoming.id)
+          const next = exists
+            ? current.map(item => item.id === incoming.id ? incoming : item)
+            : [...current, incoming]
+
+          return next.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+        })
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [cloudUser])
+
+  useEffect(() => {
     if (!cloudUser) { setCloudUpdatedAt(''); return }
     getVaultInfo(cloudUser.id).then(info => {
       const updatedAt = info?.updatedAt || ''
@@ -1036,7 +1074,7 @@ export default function App() {
     setLibraryCategory(category)
 
     try {
-      setLibraryItems(await getLibraryItems(category))
+      setLibraryItems(await listLibraryItems(category))
       setNav('library')
       setView('libraryList')
     } catch (e) {
@@ -1905,22 +1943,35 @@ async function handleImportChangeZip(event) {
     event.preventDefault()
     setSaving(true)
     setError('')
+    setSuccessMessage('')
 
     try {
       if (libraryCategory === 'archiv') throw new Error('Das Archiv bleibt erstmal leer.')
       if (!libraryForm.title.trim()) throw new Error('Bitte eine kurze Überschrift eintragen.')
       if (!libraryForm.file) throw new Error('Bitte eine Datei auswählen.')
+      if (!cloudUser) throw new Error('Bitte erneut anmelden.')
 
-      const changedAt = markDataChanged()
-      await saveLibraryItem(stampForSave({
-        ...libraryForm,
-        category: libraryCategory,
-        title: libraryForm.title.trim(),
-        note: libraryForm.note.trim(),
-      }, changedAt))
+      const saved = await saveLibraryItemToSupabase(
+        {
+          ...libraryForm,
+          title: libraryForm.title.trim(),
+          note: libraryForm.note.trim(),
+        },
+        libraryCategory,
+        cloudUser.id,
+      )
 
-      await loadLibraryItems(libraryCategory)
-      setSuccessMessage('Datei wurde gespeichert.')
+      setLibraryItems(current => {
+        const exists = current.some(item => item.id === saved.id)
+        const next = exists
+          ? current.map(item => item.id === saved.id ? saved : item)
+          : [saved, ...current]
+        return next.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      })
+
+      setLibraryForm({ ...EMPTY_LIBRARY_FORM, category: libraryCategory })
+      setView('libraryList')
+      setSuccessMessage('Bibliotheksdatei gespeichert und synchronisiert.')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -2506,7 +2557,14 @@ function openStoredFile(file) {
   			note={item.note}
   			file={item.file}
   			tone="library"
-  			onOpen={openStoredFile}
+  			onOpen={async () => {
+          try {
+            const loaded = await loadLibraryItemFile(item)
+            openStoredFile(loaded.file)
+          } catch (e) {
+            setError(`Datei konnte nicht geladen werden: ${e.message}`)
+          }
+        }}
 		/>
                     ))
                   )}
@@ -2553,7 +2611,7 @@ function openStoredFile(file) {
 
                   <div className="row-end">
                     <button type="button" className="btn btn-ghost" onClick={() => setView('libraryList')}>Abbrechen</button>
-                    <button className="btn btn-primary" disabled={saving || Boolean(patientConflict)}>
+                    <button className="btn btn-primary" disabled={saving}>
                       <Save size={16} />
                       {saving ? 'Speichern...' : 'Speichern'}
                     </button>
