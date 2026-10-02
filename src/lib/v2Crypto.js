@@ -24,24 +24,21 @@ function base64ToBytes(base64) {
   return bytes
 }
 
-function bytesToBase64Url(bytes) {
-  return bytesToBase64(bytes)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '')
+function bytesToHex(bytes) {
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-function base64UrlToBytes(value) {
-  const normalized = String(value || '')
-    .replace(/[\s-]/g, '')
-    .replace(/_/g, '/')
-    .replace(/-/g, '+')
+function recoveryCodeToBytes(value) {
+  const normalized = String(value || '').replace(/[\s-]/g, '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error('Der Wiederherstellungsschlüssel hat ein ungültiges Format.')
+  }
 
-  const padding = normalized.length % 4 === 0
-    ? ''
-    : '='.repeat(4 - (normalized.length % 4))
-
-  return base64ToBytes(normalized + padding)
+  const bytes = new Uint8Array(32)
+  for (let i = 0; i < 32; i += 1) {
+    bytes[i] = Number.parseInt(normalized.slice(i * 2, i * 2 + 2), 16)
+  }
+  return bytes
 }
 
 function randomBytes(length) {
@@ -170,10 +167,7 @@ async function wrapWithRecoveryKey(rawPracticeKey, rawRecoveryKey) {
 }
 
 async function unwrapWithRecoveryKey(envelope, recoveryCode) {
-  const rawRecoveryKey = base64UrlToBytes(recoveryCode)
-  if (rawRecoveryKey.length !== 32) {
-    throw new Error('Der Wiederherstellungsschlüssel hat ein ungültiges Format.')
-  }
+  const rawRecoveryKey = recoveryCodeToBytes(recoveryCode)
 
   const recoveryKey = await importAesKey(rawRecoveryKey, ['decrypt'])
   return aesDecryptBytes(
@@ -184,8 +178,8 @@ async function unwrapWithRecoveryKey(envelope, recoveryCode) {
 }
 
 function formatRecoveryCode(rawRecoveryKey) {
-  const compact = bytesToBase64Url(rawRecoveryKey)
-  return compact.match(/.{1,6}/g)?.join('-') || compact
+  const compact = bytesToHex(rawRecoveryKey)
+  return compact.match(/.{1,8}/g)?.join('-') || compact
 }
 
 export async function createPracticeKeyBundle(passphrase) {
