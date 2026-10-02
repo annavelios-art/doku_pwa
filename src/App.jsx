@@ -39,8 +39,9 @@ import {
 } from './lib/supabaseLibrary'
 import {
   cacheDocEntries, cacheDocEntry, cachePatient, cachePatients,
-  cachePrescription, cachePrescriptions, getCachedDocEntries,
-  getCachedPatient, getCachedPatients, getCachedPrescriptions,
+  cachePrescription, cachePrescriptions, enqueueOutbox, getCachedDocEntries,
+  getCachedPatient, getCachedPatients, getCachedPrescriptions, getOutboxCount,
+  getOutboxItems, markOutboxConflict, removeOutboxItem,
 } from './lib/v2OfflineDb'
 
 
@@ -100,6 +101,28 @@ const BACKUP_ARRAY_KEYS = [
 ]
 
 const getNowIso = () => new Date().toISOString()
+
+function isConnectivityError(error) {
+  if (!navigator.onLine) return true
+  const message = String(error?.message || error || '').toLowerCase()
+  return (
+    error instanceof TypeError ||
+    message.includes('failed to fetch') ||
+    message.includes('network') ||
+    message.includes('load failed') ||
+    message.includes('fetch')
+  )
+}
+
+function localPendingRecord(item) {
+  const now = getNowIso()
+  return {
+    ...item,
+    createdAt: item.createdAt || now,
+    updatedAt: now,
+    pendingSync: true,
+  }
+}
 
 function readStoredTimestamp(key) {
   return window.localStorage.getItem(key) || ''
@@ -461,6 +484,7 @@ export default function App() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [outboxCount, setOutboxCount] = useState(0)
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -485,6 +509,7 @@ export default function App() {
   const [autoSyncStatus, setAutoSyncStatus] = useState('off')
   const [autoSyncMessage, setAutoSyncMessage] = useState('Automatische Synchronisation ist ausgeschaltet.')
   const autoSyncBusyRef = useRef(false)
+  const outboxFlushBusyRef = useRef(false)
   const autoSyncTimerRef = useRef(null)
   const lastCloudTimestampRef = useRef('')
   const lastSyncedLocalTimestampRef = useRef('')
@@ -556,6 +581,20 @@ export default function App() {
 
   useEffect(() => {
     if (cloudUser) loadListData()
+  }, [cloudUser])
+
+  useEffect(() => {
+    if (!cloudUser) return undefined
+
+    refreshOutboxCount()
+    if (navigator.onLine) void flushOutbox()
+
+    const handleOnline = () => {
+      void flushOutbox()
+    }
+
+    window.addEventListener('online', handleOnline)
+    return () => window.removeEventListener('online', handleOnline)
   }, [cloudUser])
 
   useEffect(() => {
@@ -1136,6 +1175,147 @@ export default function App() {
       setView('libraryList')
     } catch (e) {
       setError(e.message)
+    }
+  }
+
+  async function refreshOutboxCount() {
+    try {
+      setOutboxCount(await getOutboxCount())
+    } catch {
+      setOutboxCount(0)
+    }
+  }
+
+  async function flushOutbox() {
+    if (!cloudUser || !navigator.onLine || outboxFlushBusyRef.current) return
+
+    outboxFlushBusyRef.current = true
+    let synced = 0
+    let conflicts = 0
+
+    try {
+      const items = await getOutboxItems()
+
+      for (const item of items) {
+        if (item.userId && item.userId !== cloudUser.id) continue
+
+        try {
+          if (item.kind === 'patient') {
+            const result = await savePatientToSupabase(
+              item.payload,
+              cloudUser.id,
+              item.expectedUpdatedAt || '',
+              item.mode || 'update',
+            )
+
+            if (result.conflict) {
+              conflicts += 1
+              await markOutboxConflict(item.id, result.conflict)
+              continue
+            }
+
+            const saved = { ...result.patient, pendingSync: false }
+            await cachePatient(saved)
+            setPatients(current => {
+              const exists = current.some(row => row.id === saved.id)
+              const next = exists
+                ? current.map(row => row.id === saved.id ? saved : row)
+                : [...current, saved]
+              return next.sort((a, b) =>
+                a.lastName.localeCompare(b.lastName, 'de') ||
+                a.firstName.localeCompare(b.firstName, 'de')
+              )
+            })
+          }
+
+          if (item.kind === 'prescription') {
+            const result = await savePrescriptionToSupabase(
+              item.payload,
+              item.parentId,
+              cloudUser.id,
+              item.expectedUpdatedAt || '',
+              item.mode || 'update',
+            )
+
+            if (result.conflict) {
+              conflicts += 1
+              await markOutboxConflict(item.id, result.conflict)
+              continue
+            }
+
+            const saved = { ...result.prescription, pendingSync: false }
+            await cachePrescription(saved)
+
+            if (selectedPatientRef.current?.id === saved.patientId) {
+              setPrescriptions(current => {
+                const exists = current.some(row => row.id === saved.id)
+                const next = exists
+                  ? current.map(row => row.id === saved.id ? saved : row)
+                  : [...current, saved]
+                return next.sort((a, b) => (b.issueDate || '').localeCompare(a.issueDate || ''))
+              })
+            }
+          }
+
+          if (item.kind === 'docEntry') {
+            const result = await saveDocEntryToSupabase(
+              item.payload,
+              item.parentId,
+              cloudUser.id,
+              item.expectedUpdatedAt || '',
+              item.mode || 'update',
+            )
+
+            if (result.conflict) {
+              conflicts += 1
+              await markOutboxConflict(item.id, result.conflict)
+              continue
+            }
+
+            const saved = { ...result.entry, pendingSync: false }
+            await cacheDocEntry(saved)
+
+            if (selectedPrescriptionRef.current?.id === saved.prescriptionId) {
+              setDocEntries(current => {
+                const exists = current.some(row => row.id === saved.id)
+                const next = exists
+                  ? current.map(row => row.id === saved.id ? saved : row)
+                  : [...current, saved]
+                return next.sort((a, b) =>
+                  (b.entryDate || '').localeCompare(a.entryDate || '') ||
+                  (b.createdAt || '').localeCompare(a.createdAt || '')
+                )
+              })
+            }
+          }
+
+          await removeOutboxItem(item.id)
+          synced += 1
+        } catch (e) {
+          if (isConnectivityError(e)) break
+          setError(`Offline-Synchronisation: ${e.message}`)
+          break
+        }
+      }
+
+      await refreshOutboxCount()
+
+      if (synced > 0 && conflicts === 0) {
+        setError('')
+        setSuccessMessage(
+          synced === 1
+            ? '1 Offline-Änderung wurde mit Supabase synchronisiert.'
+            : `${synced} Offline-Änderungen wurden mit Supabase synchronisiert.`,
+        )
+      } else if (conflicts > 0) {
+        setError(
+          conflicts === 1
+            ? 'Eine Offline-Änderung hat einen Konflikt und wurde nicht überschrieben.'
+            : `${conflicts} Offline-Änderungen haben Konflikte und wurden nicht überschrieben.`,
+        )
+      }
+    } finally {
+      outboxFlushBusyRef.current = false
     }
   }
 
