@@ -1906,17 +1906,84 @@ async function handleImportChangeZip(event) {
       if (!cloudUser) throw new Error('Bitte erneut anmelden.')
       if (patientConflict) throw new Error('Dieser Patient wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
 
-      const { patient: saved, conflict } = await savePatientToSupabase(
-        {
-          ...patientForm,
-          id: selectedPatient?.id || patientForm.id || '',
-          lastName: patientForm.lastName.trim(),
-          firstName: patientForm.firstName.trim(),
-        },
-        cloudUser.id,
-        selectedPatient?.updatedAt || '',
-      )
+      const isNew = !selectedPatient && !patientForm.id
+      const id = selectedPatient?.id || patientForm.id || crypto.randomUUID()
+      const mode = isNew ? 'insert' : 'update'
+      const expectedUpdatedAt = selectedPatient?.updatedAt || ''
+      const candidate = {
+        ...patientForm,
+        id,
+        lastName: patientForm.lastName.trim(),
+        firstName: patientForm.firstName.trim(),
+      }
 
+      const saveOffline = async () => {
+        const localSaved = localPendingRecord({
+          ...candidate,
+          createdAt: selectedPatient?.createdAt || patientForm.createdAt || '',
+          deletedAt: selectedPatient?.deletedAt || '',
+        })
+
+        await cachePatient(localSaved)
+        await enqueueOutbox({
+          id: `patient:${id}`,
+          kind: 'patient',
+          entityId: id,
+          mode,
+          payload: localSaved,
+          expectedUpdatedAt,
+          userId: cloudUser.id,
+        })
+        await refreshOutboxCount()
+
+        setPatients(current => {
+          const exists = current.some(item => item.id === localSaved.id)
+          const next = exists
+            ? current.map(item => item.id === localSaved.id ? localSaved : item)
+            : [...current, localSaved]
+          return next.sort((a, b) =>
+            a.lastName.localeCompare(b.lastName, 'de') ||
+            a.firstName.localeCompare(b.firstName, 'de')
+          )
+        })
+
+        setPatientConflict(null)
+        setError('')
+        setSuccessMessage('Offline gespeichert – Patient wartet auf Synchronisierung.')
+
+        if (selectedPatient) {
+          setSelectedPatient(localSaved)
+          setPatientForm(localSaved)
+          setView('patientDetail')
+        } else {
+          setSelectedPatient(null)
+          setPatientForm(EMPTY_PATIENT_FORM)
+          setView('list')
+        }
+      }
+
+      if (!navigator.onLine) {
+        await saveOffline()
+        return
+      }
+
+      let result
+      try {
+        result = await savePatientToSupabase(
+          candidate,
+          cloudUser.id,
+          expectedUpdatedAt,
+          mode,
+        )
+      } catch (e) {
+        if (isConnectivityError(e)) {
+          await saveOffline()
+          return
+        }
+        throw e
+      }
+
+      const { patient: saved, conflict } = result
       if (conflict) {
         setPatientConflict(conflict)
         setError('Dieser Patient wurde inzwischen auf einem anderen Gerät geändert. Deine Eingaben bleiben erhalten.')
@@ -2044,17 +2111,83 @@ async function handleImportChangeZip(event) {
         throw new Error('Diese Verordnung wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
       }
 
-      const { prescription: saved, conflict } = await savePrescriptionToSupabase(
-        {
-          ...prescriptionForm,
-          id: selectedPrescription?.id || prescriptionForm.id || '',
-          remedy: prescriptionForm.remedy.trim(),
-        },
-        selectedPatient.id,
-        cloudUser.id,
-        selectedPrescription?.updatedAt || '',
-      )
+      const isNew = !selectedPrescription && !prescriptionForm.id
+      const id = selectedPrescription?.id || prescriptionForm.id || crypto.randomUUID()
+      const mode = isNew ? 'insert' : 'update'
+      const expectedUpdatedAt = selectedPrescription?.updatedAt || ''
+      const candidate = {
+        ...prescriptionForm,
+        id,
+        patientId: selectedPatient.id,
+        remedy: prescriptionForm.remedy.trim(),
+      }
 
+      const saveOffline = async () => {
+        const localSaved = localPendingRecord({
+          ...candidate,
+          createdAt: selectedPrescription?.createdAt || prescriptionForm.createdAt || '',
+          deletedAt: selectedPrescription?.deletedAt || '',
+        })
+
+        await cachePrescription(localSaved)
+        await enqueueOutbox({
+          id: `prescription:${id}`,
+          kind: 'prescription',
+          entityId: id,
+          parentId: selectedPatient.id,
+          mode,
+          payload: localSaved,
+          expectedUpdatedAt,
+          userId: cloudUser.id,
+        })
+        await refreshOutboxCount()
+
+        setPrescriptions(current => {
+          const exists = current.some(item => item.id === localSaved.id)
+          const next = exists
+            ? current.map(item => item.id === localSaved.id ? localSaved : item)
+            : [...current, localSaved]
+          return next.sort((a, b) => (b.issueDate || '').localeCompare(a.issueDate || ''))
+        })
+
+        setPrescriptionConflict(null)
+        setError('')
+        setSuccessMessage('Offline gespeichert – Verordnung wartet auf Synchronisierung.')
+
+        if (selectedPrescription) {
+          setSelectedPrescription(localSaved)
+          setPrescriptionForm(localSaved)
+          setView('prescriptionDetail')
+        } else {
+          setSelectedPrescription(null)
+          setPrescriptionForm(EMPTY_PRESCRIPTION_FORM)
+          setView('patientDetail')
+        }
+      }
+
+      if (!navigator.onLine) {
+        await saveOffline()
+        return
+      }
+
+      let result
+      try {
+        result = await savePrescriptionToSupabase(
+          candidate,
+          selectedPatient.id,
+          cloudUser.id,
+          expectedUpdatedAt,
+          mode,
+        )
+      } catch (e) {
+        if (isConnectivityError(e)) {
+          await saveOffline()
+          return
+        }
+        throw e
+      }
+
+      const { prescription: saved, conflict } = result
       if (conflict) {
         setPrescriptionConflict(conflict)
         setError('Diese Verordnung wurde inzwischen auf einem anderen Gerät geändert. Deine Eingaben bleiben erhalten.')
@@ -2114,17 +2247,87 @@ async function handleImportChangeZip(event) {
         throw new Error('Dieser Doku-Eintrag wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
       }
 
-      const { entry: saved, conflict } = await saveDocEntryToSupabase(
-        {
-          ...docForm,
-          id: docBaseEntry?.id || docForm.id || '',
-          text: docForm.text.trim(),
-        },
-        selectedPrescription.id,
-        cloudUser.id,
-        docBaseEntry?.updatedAt || '',
-      )
+      const currentImageIds = docImages.map(image => image.id).sort().join('|')
+      const baseImageIds = docImageBaseIds.slice().sort().join('|')
+      const imagesChanged = currentImageIds !== baseImageIds
 
+      const isNew = !docBaseEntry && !docForm.id
+      const id = docBaseEntry?.id || docForm.id || crypto.randomUUID()
+      const mode = isNew ? 'insert' : 'update'
+      const expectedUpdatedAt = docBaseEntry?.updatedAt || ''
+      const candidate = {
+        ...docForm,
+        id,
+        prescriptionId: selectedPrescription.id,
+        text: docForm.text.trim(),
+      }
+
+      const saveOffline = async () => {
+        if (imagesChanged) {
+          throw new Error('Doku-Bilder können offline noch nicht geändert werden. Bitte Bildänderungen erst mit Internet speichern.')
+        }
+
+        const localSaved = localPendingRecord({
+          ...candidate,
+          createdAt: docBaseEntry?.createdAt || docForm.createdAt || '',
+          deletedAt: docBaseEntry?.deletedAt || '',
+        })
+
+        await cacheDocEntry(localSaved)
+        await enqueueOutbox({
+          id: `docEntry:${id}`,
+          kind: 'docEntry',
+          entityId: id,
+          parentId: selectedPrescription.id,
+          mode,
+          payload: localSaved,
+          expectedUpdatedAt,
+          userId: cloudUser.id,
+        })
+        await refreshOutboxCount()
+
+        setDocEntries(current => {
+          const exists = current.some(item => item.id === localSaved.id)
+          const next = exists
+            ? current.map(item => item.id === localSaved.id ? localSaved : item)
+            : [...current, localSaved]
+          return next.sort((a, b) =>
+            (b.entryDate || '').localeCompare(a.entryDate || '') ||
+            (b.createdAt || '').localeCompare(a.createdAt || '')
+          )
+        })
+
+        setDocForm(localSaved)
+        setDocBaseEntry(localSaved)
+        setDocConflict(null)
+        setError('')
+        setSuccessMessage('Offline gespeichert – Doku wartet auf Synchronisierung.')
+        setView('prescriptionDetail')
+      }
+
+      if (!navigator.onLine) {
+        await saveOffline()
+        return
+      }
+
+      let result
+      try {
+        result = await saveDocEntryToSupabase(
+          candidate,
+          selectedPrescription.id,
+          cloudUser.id,
+          expectedUpdatedAt,
+          mode,
+        )
+      } catch (e) {
+        if (isConnectivityError(e)) {
+          await saveOffline()
+          return
+        }
+        throw e
+      }
+
+      const { entry: saved, conflict } = result
       if (conflict) {
         setDocConflict(conflict)
         setError('Dieser Doku-Eintrag wurde inzwischen auf einem anderen Gerät geändert. Dein Text bleibt erhalten.')
@@ -2133,12 +2336,20 @@ async function handleImportChangeZip(event) {
 
       await cacheDocEntry(saved)
 
-      const syncedImages = await syncDocEntryImagesToSupabase(
-        saved.id,
-        docImages,
-        cloudUser.id,
-        docImageBaseIds,
-      )
+      let syncedImages
+      try {
+        syncedImages = await syncDocEntryImagesToSupabase(
+          saved.id,
+          docImages,
+          cloudUser.id,
+          docImageBaseIds,
+        )
+      } catch (e) {
+        setDocForm(saved)
+        setDocBaseEntry(saved)
+        setError(`Doku-Text wurde gespeichert, aber die Bilder konnten nicht synchronisiert werden: ${e.message}`)
+        return
+      }
 
       const updatedEntries = await listDocEntriesForPrescription(selectedPrescription.id)
       const counts = await getDocEntryImageCountMapFromSupabase(updatedEntries.map(entry => entry.id))
