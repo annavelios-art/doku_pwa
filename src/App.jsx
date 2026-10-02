@@ -37,6 +37,11 @@ import {
 import {
   libraryItemFromRow, listLibraryItems, loadLibraryItemFile, saveLibraryItemToSupabase,
 } from './lib/supabaseLibrary'
+import {
+  cacheDocEntries, cacheDocEntry, cachePatient, cachePatients,
+  cachePrescription, cachePrescriptions, getCachedDocEntries,
+  getCachedPatient, getCachedPatients, getCachedPrescriptions,
+} from './lib/v2OfflineDb'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -609,6 +614,7 @@ export default function App() {
 
         const incoming = patientFromRow(payload.new)
         if (!incoming?.id) return
+        void cachePatient(incoming).catch(() => {})
 
         if (incoming.deletedAt) {
           setPatients(current => current.filter(item => item.id !== incoming.id))
@@ -671,6 +677,7 @@ export default function App() {
 
         const incoming = prescriptionFromRow(payload.new)
         if (!incoming?.id) return
+        void cachePrescription(incoming).catch(() => {})
 
         const selectedPatientNow = selectedPatientRef.current
         if (!selectedPatientNow || incoming.patientId !== selectedPatientNow.id) return
@@ -733,6 +740,7 @@ export default function App() {
 
         const incoming = docEntryFromRow(payload.new)
         if (!incoming?.id) return
+        void cacheDocEntry(incoming).catch(() => {})
 
         const prescription = selectedPrescriptionRef.current
         if (!prescription || incoming.prescriptionId !== prescription.id) return
@@ -1011,11 +1019,23 @@ export default function App() {
       ])
       setPatients(all)
       setDeletedPatients(deleted)
-      // Bis die lokale Offline-Arbeitskopie angebunden ist, mischen wir hier bewusst
-      // keine alten IndexedDB-Patienten in die neue Supabase-Liste.
       setRecentPatients([])
+      await cachePatients([...all, ...deleted])
     } catch (e) {
-      setError(e.message)
+      try {
+        const cached = await getCachedPatients()
+        const active = cached.filter(patient => !patient.deletedAt)
+        const deleted = cached.filter(patient => patient.deletedAt)
+        if (!cached.length) throw e
+
+        setPatients(active)
+        setDeletedPatients(deleted)
+        setRecentPatients([])
+        setError('')
+        setSuccessMessage('Offline: lokale Arbeitskopie geladen.')
+      } catch {
+        setError(e.message)
+      }
     } finally {
       setLoading(false)
     }
@@ -1035,6 +1055,11 @@ export default function App() {
         listPatientDocumentsForPatient(patientId),
       ])
 
+      await Promise.all([
+        cachePatient(patient),
+        cachePrescriptions(patientPrescriptions),
+      ])
+
       setSelectedPatient(patient)
       setPrescriptions(patientPrescriptions)
       setPatientDocuments(documents)
@@ -1043,7 +1068,25 @@ export default function App() {
       setDocEntryImageCounts({})
       setView('patientDetail')
     } catch (e) {
-      setError(e.message)
+      try {
+        const [patient, patientPrescriptions] = await Promise.all([
+          getCachedPatient(patientId),
+          getCachedPrescriptions(patientId),
+        ])
+        if (!patient || patient.deletedAt) throw e
+
+        setSelectedPatient(patient)
+        setPrescriptions(patientPrescriptions)
+        setPatientDocuments([])
+        setSelectedPrescription(null)
+        setDocEntries([])
+        setDocEntryImageCounts({})
+        setView('patientDetail')
+        setError('')
+        setSuccessMessage('Offline: Patient und Verordnungen aus lokaler Arbeitskopie.')
+      } catch {
+        setError(e.message)
+      }
     }
   }
 
@@ -1060,12 +1103,26 @@ export default function App() {
     try {
       const entries = await listDocEntriesForPrescription(prescription.id)
       const counts = await getDocEntryImageCountMapFromSupabase(entries.map(entry => entry.id))
+      await Promise.all([
+        cachePrescription(prescription),
+        cacheDocEntries(entries),
+      ])
       setSelectedPrescription(prescription)
       setDocEntries(entries)
       setDocEntryImageCounts(counts)
       setView('prescriptionDetail')
     } catch (e) {
-      setError(e.message)
+      try {
+        const entries = await getCachedDocEntries(prescription.id)
+        setSelectedPrescription(prescription)
+        setDocEntries(entries)
+        setDocEntryImageCounts(Object.fromEntries(entries.map(entry => [entry.id, 0])))
+        setView('prescriptionDetail')
+        setError('')
+        setSuccessMessage('Offline: Doku aus lokaler Arbeitskopie.')
+      } catch {
+        setError(e.message)
+      }
     }
   }
 
@@ -1686,6 +1743,8 @@ async function handleImportChangeZip(event) {
         return
       }
 
+      await cachePatient(saved)
+
       setPatients(current => {
         const exists = current.some(item => item.id === saved.id)
         const next = exists
@@ -1822,6 +1881,8 @@ async function handleImportChangeZip(event) {
         return
       }
 
+      await cachePrescription(saved)
+
       setPrescriptions(current => {
         const exists = current.some(item => item.id === saved.id)
         const next = exists
@@ -1889,6 +1950,8 @@ async function handleImportChangeZip(event) {
         setError('Dieser Doku-Eintrag wurde inzwischen auf einem anderen Gerät geändert. Dein Text bleibt erhalten.')
         return
       }
+
+      await cacheDocEntry(saved)
 
       const syncedImages = await syncDocEntryImagesToSupabase(
         saved.id,
