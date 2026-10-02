@@ -50,6 +50,9 @@ import {
   createPracticeKeyBundle, decryptPracticeText, encryptPracticeText,
   unlockPracticeKey, unlockPracticeKeyWithRecovery, V2_CRYPTO_PARAMETERS,
 } from './lib/v2Crypto'
+import {
+  loadEncryptedFantasyPatient, saveEncryptedFantasyPatient,
+} from './lib/supabaseCryptoLab'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -98,6 +101,13 @@ const AUTO_SYNC_POLL_MS = 20000
 const ENCRYPTION_ITERATIONS = 100000
 const APP_VERSION = '2026-07-17-backup-v2'
 const V2_CRYPTO_LAB_STORAGE_KEY = 'physiooptima-v2-crypto-lab'
+const V2_CRYPTO_LAB_PATIENT_CONTEXT = 'physiooptima:v2:crypto-lab:fantasy_patient_v1'
+const V2_CRYPTO_LAB_PATIENT = Object.freeze({
+  firstName: 'Max',
+  lastName: 'Muster',
+  birthDate: '1970-02-01',
+  note: 'Schulter rechts',
+})
 
 const BACKUP_ARRAY_KEYS = [
   'patients',
@@ -508,6 +518,9 @@ export default function App() {
   const [cryptoTestText, setCryptoTestText] = useState('Testpatient Max Muster – Schulter rechts.')
   const [cryptoCipherPreview, setCryptoCipherPreview] = useState('')
   const [cryptoDecryptedText, setCryptoDecryptedText] = useState('')
+  const [cryptoCloudCipherPreview, setCryptoCloudCipherPreview] = useState('')
+  const [cryptoCloudPatient, setCryptoCloudPatient] = useState(null)
+  const [cryptoCloudUpdatedAt, setCryptoCloudUpdatedAt] = useState('')
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -2007,11 +2020,104 @@ async function handleImportChangeZip(event) {
     }
   }
 
+  async function handleSaveCryptoLabPatientToSupabase() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (!cloudUser) throw new Error('Bitte zuerst bei Supabase anmelden.')
+      if (!navigator.onLine) throw new Error('Für diesen Test wird eine Internetverbindung benötigt.')
+      if (!cryptoPracticeKeyRef.current) {
+        throw new Error('Bitte den Test-Praxisschlüssel zuerst entsperren.')
+      }
+
+      const encrypted = await encryptPracticeText(
+        JSON.stringify(V2_CRYPTO_LAB_PATIENT),
+        cryptoPracticeKeyRef.current,
+        V2_CRYPTO_LAB_PATIENT_CONTEXT,
+      )
+
+      const row = await saveEncryptedFantasyPatient(encrypted, cloudUser.id)
+      const serverPayload = JSON.stringify(row.payload)
+      const forbiddenPlaintext = [
+        V2_CRYPTO_LAB_PATIENT.firstName,
+        V2_CRYPTO_LAB_PATIENT.lastName,
+        V2_CRYPTO_LAB_PATIENT.birthDate,
+        V2_CRYPTO_LAB_PATIENT.note,
+      ]
+
+      if (forbiddenPlaintext.some(value => serverPayload.includes(value))) {
+        throw new Error('Sicherheitsprüfung fehlgeschlagen: Klartext wurde im Server-Payload gefunden.')
+      }
+
+      setCryptoCloudCipherPreview(
+        serverPayload.length > 320 ? `${serverPayload.slice(0, 320)}…` : serverPayload,
+      )
+      setCryptoCloudPatient(null)
+      setCryptoCloudUpdatedAt(row.updated_at || '')
+      setSuccessMessage(
+        'Fantasiepatient wurde verschlüsselt gespeichert. Der von Supabase zurückgegebene Payload enthält keinen Namen, kein Geburtsdatum und keine Notiz im Klartext.',
+      )
+    } catch (e) {
+      setError(`Supabase-Verschlüsselungstest fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  async function handleLoadCryptoLabPatientFromSupabase() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (!cloudUser) throw new Error('Bitte zuerst bei Supabase anmelden.')
+      if (!navigator.onLine) throw new Error('Für diesen Test wird eine Internetverbindung benötigt.')
+      if (!cryptoPracticeKeyRef.current) {
+        throw new Error('Bitte den Test-Praxisschlüssel zuerst entsperren.')
+      }
+
+      const row = await loadEncryptedFantasyPatient()
+      if (!row) throw new Error('Noch kein verschlüsselter Fantasiepatient in Supabase gefunden.')
+
+      const serverPayload = JSON.stringify(row.payload)
+      const decryptedJson = await decryptPracticeText(
+        row.payload,
+        cryptoPracticeKeyRef.current,
+      )
+      const patient = JSON.parse(decryptedJson)
+
+      if (
+        patient.firstName !== V2_CRYPTO_LAB_PATIENT.firstName ||
+        patient.lastName !== V2_CRYPTO_LAB_PATIENT.lastName ||
+        patient.birthDate !== V2_CRYPTO_LAB_PATIENT.birthDate ||
+        patient.note !== V2_CRYPTO_LAB_PATIENT.note
+      ) {
+        throw new Error('Entschlüsselter Fantasiepatient stimmt nicht mit dem erwarteten Testdatensatz überein.')
+      }
+
+      setCryptoCloudCipherPreview(
+        serverPayload.length > 320 ? `${serverPayload.slice(0, 320)}…` : serverPayload,
+      )
+      setCryptoCloudPatient(patient)
+      setCryptoCloudUpdatedAt(row.updated_at || '')
+      setSuccessMessage(
+        'Fantasiepatient aus Supabase geladen und erst auf diesem Gerät wieder lesbar gemacht.',
+      )
+    } catch (e) {
+      setError(`Laden/Entschlüsseln fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
   function handleLockCryptoLab() {
     cryptoPracticeKeyRef.current = null
     setCryptoUnlocked(false)
     setCryptoCipherPreview('')
     setCryptoDecryptedText('')
+    setCryptoCloudPatient(null)
     setSuccessMessage('Test-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
   }
 
@@ -2028,6 +2134,9 @@ async function handleImportChangeZip(event) {
     setCryptoRecoveryInput('')
     setCryptoCipherPreview('')
     setCryptoDecryptedText('')
+    setCryptoCloudCipherPreview('')
+    setCryptoCloudPatient(null)
+    setCryptoCloudUpdatedAt('')
     setError('')
     setSuccessMessage('Lokaler Verschlüsselungstest wurde zurückgesetzt.')
   }
@@ -3260,6 +3369,53 @@ function openStoredFile(file) {
                             >
                               {cryptoBusy ? 'Teste …' : 'Testtext verschlüsseln + entschlüsseln'}
                             </button>
+
+                            <div className="sync-status">
+                              <strong>Nächster Bohrabschnitt: Fantasiepatient → Supabase</strong>
+                              <span>
+                                Max Muster · 01.02.1970 · Schulter rechts. Vor dem Upload wird der komplette
+                                Datensatz hier im Browser verschlüsselt.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleSaveCryptoLabPatientToSupabase}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Fantasiepatient verschlüsselt in Supabase speichern
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLoadCryptoLabPatientFromSupabase}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Aus Supabase laden + lokal entschlüsseln
+                            </button>
+
+                            {cryptoCloudCipherPreview && (
+                              <div className="sync-status">
+                                <strong>Von Supabase zurückgegeben – nur Chiffretext</strong>
+                                <span style={{ overflowWrap: 'anywhere' }}>{cryptoCloudCipherPreview}</span>
+                                {cryptoCloudUpdatedAt && (
+                                  <span>Supabase-Stand: {formatDateTime(cryptoCloudUpdatedAt)}</span>
+                                )}
+                              </div>
+                            )}
+
+                            {cryptoCloudPatient && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Auf diesem Gerät wieder lesbar</strong>
+                                <span>
+                                  {cryptoCloudPatient.firstName} {cryptoCloudPatient.lastName} ·
+                                  {' '}{formatDate(cryptoCloudPatient.birthDate)} ·
+                                  {' '}{cryptoCloudPatient.note}
+                                </span>
+                              </div>
+                            )}
 
                             {cryptoCipherPreview && (
                               <div className="sync-status">
