@@ -16,6 +16,10 @@ import DateInput from './components/DateInput'
 import { loadModel } from './speech/speechService'
 import { supabase } from './lib/supabase'
 import { downloadVault, downloadVaultManifest, getVaultInfo, uploadVault } from './lib/cloudVault'
+import {
+  getPatientFromSupabase, listActivePatients, listDeletedPatients, patientFromRow,
+  restorePatientInSupabase, savePatientToSupabase, softDeletePatientInSupabase,
+} from './lib/supabasePatients'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -56,6 +60,8 @@ const USER_ROLE_LABELS = {
 }
 
 const LAST_MODIFIED_STORAGE_KEY = 'pwaLastModifiedAt'
+const LOGIN_AT_STORAGE_KEY = 'physiooptima-doku-login-at'
+const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000
 const LAST_ENCRYPTED_EXPORT_STORAGE_KEY = 'pwaLastEncryptedExportAt'
 const AUTO_SYNC_DEBOUNCE_MS = 8000
 const AUTO_SYNC_POLL_MS = 20000
@@ -441,6 +447,8 @@ export default function App() {
   const [lastModifiedAt, setLastModifiedAt] = useState(() => readStoredTimestamp(LAST_MODIFIED_STORAGE_KEY))
   const [lastEncryptedExportAt, setLastEncryptedExportAt] = useState(() => readStoredTimestamp(LAST_ENCRYPTED_EXPORT_STORAGE_KEY))
   const [cloudUser, setCloudUser] = useState(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [patientConflict, setPatientConflict] = useState(null)
   const [cloudEmail, setCloudEmail] = useState('')
   const [cloudPassword, setCloudPassword] = useState('')
   const [cloudUpdatedAt, setCloudUpdatedAt] = useState('')
@@ -454,6 +462,10 @@ export default function App() {
   const lastSyncedLocalTimestampRef = useRef('')
   const lastModifiedAtRef = useRef(lastModifiedAt)
   const remoteApplyRef = useRef(false)
+  const selectedPatientRef = useRef(null)
+  const patientFormRef = useRef(EMPTY_PATIENT_FORM)
+  const viewRef = useRef('list')
+  const patientSaveBusyRef = useRef(false)
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
   const canManageTrash = isOwner && Boolean(cloudUser)
@@ -487,21 +499,119 @@ export default function App() {
     return ['Patientenliste']
   }, [nav, view, selectedPatient, selectedPrescription, docForm.entryDate, libraryCategory])
 
-  useEffect(() => { loadListData() }, [])
+  useEffect(() => {
+    selectedPatientRef.current = selectedPatient
+    patientFormRef.current = patientForm
+    viewRef.current = view
+  }, [selectedPatient, patientForm, view])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setCloudUser(data.user || null))
+    if (cloudUser) loadListData()
+  }, [cloudUser])
+
+  useEffect(() => {
+    let active = true
+
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!active) return
+
+      const loginAt = Number(window.localStorage.getItem(LOGIN_AT_STORAGE_KEY) || 0)
+      const session = data.session
+
+      if (session && loginAt && Date.now() - loginAt > TEN_DAYS_MS) {
+        await supabase.auth.signOut()
+        window.localStorage.removeItem(LOGIN_AT_STORAGE_KEY)
+        setCloudUser(null)
+      } else {
+        if (session && !loginAt) {
+          window.localStorage.setItem(LOGIN_AT_STORAGE_KEY, String(Date.now()))
+        }
+        setCloudUser(session?.user || null)
+      }
+
+      setAuthReady(true)
+    }).catch(() => setAuthReady(true))
+
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       setCloudUser(session?.user || null)
+      setAuthReady(true)
+
       if (event === 'SIGNED_OUT') {
+        window.localStorage.removeItem(LOGIN_AT_STORAGE_KEY)
         window.clearTimeout(autoSyncTimerRef.current)
         setAutoSyncPassword('')
         setAutoSyncStatus('off')
         setAutoSyncMessage('Automatische Synchronisation ist ausgeschaltet.')
       }
     })
-    return () => data.subscription.unsubscribe()
+
+    return () => {
+      active = false
+      data.subscription.unsubscribe()
+    }
   }, [])
+
+  useEffect(() => {
+    if (!cloudUser) return undefined
+
+    const channel = supabase
+      .channel('doku-v2-patients')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, payload => {
+        if (payload.eventType === 'DELETE') {
+          const removedId = payload.old?.id
+          if (removedId) setPatients(current => current.filter(item => item.id !== removedId))
+          return
+        }
+
+        const incoming = patientFromRow(payload.new)
+        if (!incoming?.id) return
+
+        if (incoming.deletedAt) {
+          setPatients(current => current.filter(item => item.id !== incoming.id))
+          setDeletedPatients(current => {
+            const exists = current.some(item => item.id === incoming.id)
+            return exists
+              ? current.map(item => item.id === incoming.id ? incoming : item)
+              : [...current, incoming]
+          })
+        } else {
+          setPatients(current => {
+            const exists = current.some(item => item.id === incoming.id)
+            const next = exists
+              ? current.map(item => item.id === incoming.id ? incoming : item)
+              : [...current, incoming]
+            return next.sort((a, b) =>
+              a.lastName.localeCompare(b.lastName, 'de') || a.firstName.localeCompare(b.firstName, 'de')
+            )
+          })
+          setDeletedPatients(current => current.filter(item => item.id !== incoming.id))
+        }
+
+        const selected = selectedPatientRef.current
+        if (!selected || selected.id !== incoming.id || patientSaveBusyRef.current) return
+
+        if (viewRef.current === 'patientEdit') {
+          const form = patientFormRef.current
+          const dirty =
+            form.firstName !== selected.firstName ||
+            form.lastName !== selected.lastName ||
+            form.birthDate !== selected.birthDate
+
+          if (dirty && incoming.updatedAt !== selected.updatedAt) {
+            setPatientConflict(incoming)
+          } else if (!dirty) {
+            setSelectedPatient(incoming)
+            setPatientForm(incoming)
+            setPatientConflict(null)
+          }
+        } else if (viewRef.current === 'patientDetail') {
+          setSelectedPatient(incoming)
+        }
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [cloudUser])
 
   useEffect(() => {
     if (!cloudUser) { setCloudUpdatedAt(''); return }
@@ -583,18 +693,20 @@ export default function App() {
   }, [printData])
 
   async function loadListData() {
+    if (!cloudUser) return
     setLoading(true)
     setError('')
 
     try {
-      const [all, deleted, recents] = await Promise.all([
-        getAllPatients(),
-        getDeletedPatients(),
-        getRecentlyOpenedPatients(),
+      const [all, deleted] = await Promise.all([
+        listActivePatients(),
+        listDeletedPatients(),
       ])
       setPatients(all)
       setDeletedPatients(deleted)
-      setRecentPatients(recents)
+      // Bis die lokale Offline-Arbeitskopie angebunden ist, mischen wir hier bewusst
+      // keine alten IndexedDB-Patienten in die neue Supabase-Liste.
+      setRecentPatients([])
     } catch (e) {
       setError(e.message)
     } finally {
@@ -605,10 +717,11 @@ export default function App() {
   async function loadPatientDetail(patientId) {
     setNav('patients')
     setError('')
+    setPatientConflict(null)
 
     try {
-      const patient = await getPatientById(patientId)
-      if (!patient) throw new Error('Patient wurde nicht gefunden.')
+      const patient = await getPatientFromSupabase(patientId)
+      if (!patient || patient.deletedAt) throw new Error('Patient wurde nicht gefunden.')
 
       const [patientPrescriptions, documents] = await Promise.all([
         getPrescriptionsByPatientId(patientId),
@@ -621,9 +734,6 @@ export default function App() {
       setSelectedPrescription(null)
       setDocEntries([])
       setDocEntryImageCounts({})
-
-      await markPatientAsRecentlyOpened(patientId)
-      setRecentPatients(await getRecentlyOpenedPatients())
       setView('patientDetail')
     } catch (e) {
       setError(e.message)
@@ -773,7 +883,8 @@ async function handleCloudLogin(event) {
   try {
     const { error: loginError } = await supabase.auth.signInWithPassword({ email: cloudEmail.trim(), password: cloudPassword })
     if (loginError) throw loginError
-    setCloudPassword(''); setSuccessMessage('Cloud-Anmeldung erfolgreich.')
+    window.localStorage.setItem(LOGIN_AT_STORAGE_KEY, String(Date.now()))
+    setCloudPassword(''); setSuccessMessage('Anmeldung erfolgreich.')
   } catch (e) { setError(`Cloud-Anmeldung fehlgeschlagen: ${e.message}`) }
   finally { setCloudBusy(false) }
 }
@@ -1240,29 +1351,66 @@ async function handleImportChangeZip(event) {
     event.preventDefault()
     setSaving(true)
     setError('')
+    setSuccessMessage('')
+    patientSaveBusyRef.current = true
 
     try {
       if (!patientForm.lastName.trim() || !patientForm.firstName.trim() || !patientForm.birthDate) {
         throw new Error('Bitte Name, Vorname und Geburtsdatum ausfüllen.')
       }
+      if (!cloudUser) throw new Error('Bitte erneut anmelden.')
+      if (patientConflict) throw new Error('Dieser Patient wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
 
-      const changedAt = markDataChanged()
-      const saved = await savePatient(stampForSave({
-        ...patientForm,
-        lastName: patientForm.lastName.trim(),
-        firstName: patientForm.firstName.trim(),
-      }, changedAt))
+      const { patient: saved, conflict } = await savePatientToSupabase(
+        {
+          ...patientForm,
+          id: selectedPatient?.id || patientForm.id || '',
+          lastName: patientForm.lastName.trim(),
+          firstName: patientForm.firstName.trim(),
+        },
+        cloudUser.id,
+        selectedPatient?.updatedAt || '',
+      )
 
-      await markPatientAsRecentlyOpened(saved.id)
-      await loadListData()
+      if (conflict) {
+        setPatientConflict(conflict)
+        setError('Dieser Patient wurde inzwischen auf einem anderen Gerät geändert. Deine Eingaben bleiben erhalten.')
+        return
+      }
+
+      setPatients(current => {
+        const exists = current.some(item => item.id === saved.id)
+        const next = exists
+          ? current.map(item => item.id === saved.id ? saved : item)
+          : [...current, saved]
+        return next.sort((a, b) =>
+          a.lastName.localeCompare(b.lastName, 'de') || a.firstName.localeCompare(b.firstName, 'de')
+        )
+      })
+      setPatientConflict(null)
+      setSuccessMessage('Patient gespeichert und synchronisiert.')
 
       if (selectedPatient) await loadPatientDetail(saved.id)
-      else setView('list')
+      else {
+        setSelectedPatient(null)
+        setPatientForm(EMPTY_PATIENT_FORM)
+        setView('list')
+      }
     } catch (e) {
       setError(e.message)
     } finally {
+      patientSaveBusyRef.current = false
       setSaving(false)
     }
+  }
+
+  function handleLoadPatientConflict() {
+    if (!patientConflict) return
+    setSelectedPatient(patientConflict)
+    setPatientForm(patientConflict)
+    setPatientConflict(null)
+    setError('')
+    setSuccessMessage('Aktueller Stand wurde geladen.')
   }
 
   async function handleMovePatientToTrash() {
@@ -1288,9 +1436,11 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('')
 
     try {
-      const changedAt = getNowIso()
-      await movePatientToTrash(selectedPatient.id, changedAt)
-      markDataChanged(changedAt)
+      const { conflict } = await softDeletePatientInSupabase(selectedPatient.id, selectedPatient.updatedAt || '')
+      if (conflict) {
+        setPatientConflict(conflict)
+        throw new Error('Der Patient wurde inzwischen auf einem anderen Gerät geändert. Bitte neu öffnen und erneut versuchen.')
+      }
       await loadListData()
       setSelectedPatient(null)
       setSelectedPrescription(null)
@@ -1319,8 +1469,7 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('')
 
     try {
-      await restorePatientFromTrash(patient.id)
-      markDataChanged()
+      await restorePatientInSupabase(patient.id)
       await loadListData()
       setSuccessMessage(`${patientLabel(patient)} wurde wiederhergestellt.`)
     } catch (e) {
@@ -1624,6 +1773,41 @@ function openStoredFile(file) {
 
     setSuccessMessage(
       `Änderungs-Export für ${name} ist vorbereitet. In der nächsten Stufe werden nur neue Patienten, Verordnungen und Doku-Einträge verschlüsselt an die Praxisleitung übertragen.`
+    )
+  }
+
+  if (!authReady) {
+    return (
+      <div className="app-shell">
+        <main className="app-main">
+          <section className="surface-card stack" style={{ maxWidth: 520, margin: '48px auto' }}>
+            <h2 className="section-title">PhysioOptima</h2>
+            <p className="muted">Anmeldung wird geprüft ...</p>
+          </section>
+        </main>
+      </div>
+    )
+  }
+
+  if (!cloudUser) {
+    return (
+      <div className="app-shell">
+        <main className="app-main">
+          <section className="surface-card stack" style={{ maxWidth: 520, margin: '48px auto' }}>
+            <div className="sidebar-logo-wrap">
+              <img src="/logo_kl.gif" alt="Praxis Logo" className="sidebar-logo" />
+            </div>
+            <h2 className="section-title">Behandlungsdokumentation</h2>
+            <p className="muted">Bitte mit deinem Supabase-Benutzerkonto anmelden.</p>
+            <form className="stack" onSubmit={handleCloudLogin}>
+              <input className="field" type="email" placeholder="E-Mail" value={cloudEmail} onChange={e => setCloudEmail(e.target.value)} required />
+              <input className="field" type="password" placeholder="Passwort" value={cloudPassword} onChange={e => setCloudPassword(e.target.value)} required />
+              <button className="btn btn-primary" disabled={cloudBusy}>{cloudBusy ? 'Anmeldung ...' : 'Anmelden'}</button>
+            </form>
+            {error && <p className="error-message">{error}</p>}
+          </section>
+        </main>
+      </div>
     )
   }
 
@@ -1983,7 +2167,7 @@ function openStoredFile(file) {
 
                   <div className="row-end">
                     <button type="button" className="btn btn-ghost" onClick={() => setView('libraryList')}>Abbrechen</button>
-                    <button className="btn btn-primary" disabled={saving}>
+                    <button className="btn btn-primary" disabled={saving || Boolean(patientConflict)}>
                       <Save size={16} />
                       {saving ? 'Speichern...' : 'Speichern'}
                     </button>
@@ -2018,6 +2202,7 @@ function openStoredFile(file) {
                       onClick={() => {
                         setPatientForm(EMPTY_PATIENT_FORM)
                         setSelectedPatient(null)
+                        setPatientConflict(null)
                         setView('patientEdit')
                       }}
                       className="btn btn-primary add-patient-btn"
@@ -2134,6 +2319,7 @@ function openStoredFile(file) {
                       className="btn btn-ghost"
                       onClick={() => {
                         setPatientForm(selectedPatient)
+                        setPatientConflict(null)
                         setView('patientEdit')
                       }}
                     >
@@ -2303,6 +2489,20 @@ function openStoredFile(file) {
                     <ArrowLeft size={16} />
                     Zurück
                   </button>
+
+                  {patientConflict && (
+                    <div className="sync-conflict-box">
+                      <strong>Änderung auf einem anderen Gerät erkannt.</strong>
+                      <p>Deine offenen Eingaben wurden nicht überschrieben.</p>
+                      <p>
+                        Aktueller Stand: {patientConflict.lastName}, {patientConflict.firstName}
+                        {' · '}{formatDate(patientConflict.birthDate)}
+                      </p>
+                      <button type="button" className="btn btn-ghost" onClick={handleLoadPatientConflict}>
+                        Aktuellen Stand laden
+                      </button>
+                    </div>
+                  )}
 
                   <input
                     className="field"
