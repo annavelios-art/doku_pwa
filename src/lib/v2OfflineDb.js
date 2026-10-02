@@ -1,9 +1,10 @@
 const DB_NAME = 'physio-doc-v2-cache'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 const PATIENTS = 'patients'
 const PRESCRIPTIONS = 'prescriptions'
 const DOC_ENTRIES = 'docEntries'
+const OUTBOX = 'outbox'
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -24,6 +25,12 @@ function openDb() {
       if (!db.objectStoreNames.contains(DOC_ENTRIES)) {
         const store = db.createObjectStore(DOC_ENTRIES, { keyPath: 'id' })
         store.createIndex('prescriptionId', 'prescriptionId', { unique: false })
+      }
+
+      if (!db.objectStoreNames.contains(OUTBOX)) {
+        const store = db.createObjectStore(OUTBOX, { keyPath: 'id' })
+        store.createIndex('queuedAt', 'queuedAt', { unique: false })
+        store.createIndex('kind', 'kind', { unique: false })
       }
     }
 
@@ -133,4 +140,58 @@ export async function getCachedDocEntries(prescriptionId) {
       (b.entryDate || '').localeCompare(a.entryDate || '') ||
       (b.createdAt || '').localeCompare(a.createdAt || '')
     )
+}
+
+
+export async function enqueueOutbox(operation) {
+  if (!operation?.id) throw new Error('Outbox-Eintrag ohne ID.')
+  const db = await openDb()
+  const tx = db.transaction(OUTBOX, 'readwrite')
+  const store = tx.objectStore(OUTBOX)
+  const existing = await requestResult(store.get(operation.id))
+
+  const next = {
+    ...operation,
+    queuedAt: existing?.queuedAt || operation.queuedAt || new Date().toISOString(),
+    mode: existing?.mode || operation.mode,
+    expectedUpdatedAt: existing?.expectedUpdatedAt || operation.expectedUpdatedAt || '',
+    status: 'pending',
+  }
+
+  store.put(next)
+  await transactionDone(tx)
+  return next
+}
+
+export async function getOutboxItems() {
+  const items = await getAll(OUTBOX)
+  const priority = { patient: 1, prescription: 2, docEntry: 3 }
+  return items.sort((a, b) =>
+    (priority[a.kind] || 99) - (priority[b.kind] || 99) ||
+    (a.queuedAt || '').localeCompare(b.queuedAt || '')
+  )
+}
+
+export async function removeOutboxItem(id) {
+  const db = await openDb()
+  const tx = db.transaction(OUTBOX, 'readwrite')
+  tx.objectStore(OUTBOX).delete(id)
+  await transactionDone(tx)
+}
+
+export async function markOutboxConflict(id, remote) {
+  const db = await openDb()
+  const tx = db.transaction(OUTBOX, 'readwrite')
+  const store = tx.objectStore(OUTBOX)
+  const item = await requestResult(store.get(id))
+  if (item) {
+    store.put({ ...item, status: 'conflict', remote, conflictAt: new Date().toISOString() })
+  }
+  await transactionDone(tx)
+}
+
+export async function getOutboxCount() {
+  const db = await openDb()
+  const tx = db.transaction(OUTBOX, 'readonly')
+  return requestResult(tx.objectStore(OUTBOX).count())
 }
