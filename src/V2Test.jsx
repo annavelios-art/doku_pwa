@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 
+const LOGIN_AT_KEY = 'physiooptima-v2-login-at'
+const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000
+
 export default function V2Test() {
   const [session, setSession] = useState(null)
   const [email, setEmail] = useState('')
@@ -9,9 +12,24 @@ export default function V2Test() {
   const [status, setStatus] = useState('Bereit')
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session || null))
+    let active = true
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!active) return
+      const loginAt = Number(localStorage.getItem(LOGIN_AT_KEY) || 0)
+      if (data.session && loginAt && Date.now() - loginAt > TEN_DAYS_MS) {
+        await supabase.auth.signOut()
+        localStorage.removeItem(LOGIN_AT_KEY)
+        setSession(null)
+        setStatus('10 Tage abgelaufen – bitte erneut anmelden.')
+        return
+      }
+      setSession(data.session || null)
+    })
     const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
-    return () => data.subscription.unsubscribe()
+    return () => {
+      active = false
+      data.subscription.unsubscribe()
+    }
   }, [])
 
   useEffect(() => {
@@ -37,6 +55,7 @@ export default function V2Test() {
     e.preventDefault()
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) return setStatus('Login fehlgeschlagen: ' + error.message)
+    localStorage.setItem(LOGIN_AT_KEY, String(Date.now()))
     setSession(data.session)
     setPassword('')
     setStatus('Angemeldet ✓')
@@ -44,6 +63,7 @@ export default function V2Test() {
 
   async function logout() {
     await supabase.auth.signOut()
+    localStorage.removeItem(LOGIN_AT_KEY)
     setPatients([])
     setStatus('Abgemeldet')
   }
@@ -74,6 +94,7 @@ export default function V2Test() {
   if (!session) return <main className="v2-page">
     <section className="v2-card">
       <h1>PhysioOptima · V2 Test</h1>
+      <p>Login + einzelne Supabase-Datensätze + Realtime ohne Seitenreload.</p>
       <form onSubmit={login} className="v2-stack">
         <input type="email" placeholder="E-Mail" value={email} onChange={e => setEmail(e.target.value)} required />
         <input type="password" placeholder="Passwort" value={password} onChange={e => setPassword(e.target.value)} required />
@@ -96,7 +117,7 @@ export default function V2Test() {
         <button onClick={() => rename(p)}>Vorname ändern</button>
       </div>)}
       {patients.length === 0 && <p>Noch leer.</p>}
-      <small>Realtime aktualisiert nur die Liste. Kein Seitenreload.</small>
+      <small>Realtime aktualisiert nur die Liste. Kein Seitenreload. Anmeldung bleibt maximal 10 Tage bestehen.</small>
     </section>
   </main>
 }
