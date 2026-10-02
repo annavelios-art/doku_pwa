@@ -20,6 +20,9 @@ import {
   getPatientFromSupabase, listActivePatients, listDeletedPatients, patientFromRow,
   restorePatientInSupabase, savePatientToSupabase, softDeletePatientInSupabase,
 } from './lib/supabasePatients'
+import {
+  listPrescriptionsForPatient, prescriptionFromRow, savePrescriptionToSupabase,
+} from './lib/supabasePrescriptions'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -449,6 +452,7 @@ export default function App() {
   const [cloudUser, setCloudUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [patientConflict, setPatientConflict] = useState(null)
+  const [prescriptionConflict, setPrescriptionConflict] = useState(null)
   const [cloudEmail, setCloudEmail] = useState('')
   const [cloudPassword, setCloudPassword] = useState('')
   const [cloudUpdatedAt, setCloudUpdatedAt] = useState('')
@@ -466,6 +470,9 @@ export default function App() {
   const patientFormRef = useRef(EMPTY_PATIENT_FORM)
   const viewRef = useRef('list')
   const patientSaveBusyRef = useRef(false)
+  const selectedPrescriptionRef = useRef(null)
+  const prescriptionFormRef = useRef(EMPTY_PRESCRIPTION_FORM)
+  const prescriptionSaveBusyRef = useRef(false)
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
   const canManageTrash = isOwner && Boolean(cloudUser)
@@ -502,8 +509,10 @@ export default function App() {
   useEffect(() => {
     selectedPatientRef.current = selectedPatient
     patientFormRef.current = patientForm
+    selectedPrescriptionRef.current = selectedPrescription
+    prescriptionFormRef.current = prescriptionForm
     viewRef.current = view
-  }, [selectedPatient, patientForm, view])
+  }, [selectedPatient, patientForm, selectedPrescription, prescriptionForm, view])
 
   useEffect(() => {
     if (cloudUser) loadListData()
@@ -606,6 +615,61 @@ export default function App() {
           }
         } else if (viewRef.current === 'patientDetail') {
           setSelectedPatient(incoming)
+        }
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [cloudUser])
+
+  useEffect(() => {
+    if (!cloudUser) return undefined
+
+    const channel = supabase
+      .channel('doku-v2-prescriptions')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'prescriptions' }, payload => {
+        if (payload.eventType === 'DELETE') {
+          const removedId = payload.old?.id
+          if (removedId) setPrescriptions(current => current.filter(item => item.id !== removedId))
+          return
+        }
+
+        const incoming = prescriptionFromRow(payload.new)
+        if (!incoming?.id) return
+
+        const selectedPatientNow = selectedPatientRef.current
+        if (!selectedPatientNow || incoming.patientId !== selectedPatientNow.id) return
+
+        if (incoming.deletedAt) {
+          setPrescriptions(current => current.filter(item => item.id !== incoming.id))
+        } else {
+          setPrescriptions(current => {
+            const exists = current.some(item => item.id === incoming.id)
+            const next = exists
+              ? current.map(item => item.id === incoming.id ? incoming : item)
+              : [...current, incoming]
+            return next.sort((a, b) => (b.issueDate || '').localeCompare(a.issueDate || ''))
+          })
+        }
+
+        const selected = selectedPrescriptionRef.current
+        if (!selected || selected.id !== incoming.id || prescriptionSaveBusyRef.current) return
+
+        if (viewRef.current === 'prescriptionEdit') {
+          const form = prescriptionFormRef.current
+          const dirty =
+            form.issueDate !== selected.issueDate ||
+            form.remedy !== selected.remedy
+
+          if (dirty && incoming.updatedAt !== selected.updatedAt) {
+            setPrescriptionConflict(incoming)
+          } else if (!dirty) {
+            setSelectedPrescription(incoming)
+            setPrescriptionForm(incoming)
+            setPrescriptionConflict(null)
+          }
+        } else if (viewRef.current === 'prescriptionDetail') {
+          setSelectedPrescription(incoming)
         }
       })
       .subscribe()
@@ -724,7 +788,7 @@ export default function App() {
       if (!patient || patient.deletedAt) throw new Error('Patient wurde nicht gefunden.')
 
       const [patientPrescriptions, documents] = await Promise.all([
-        getPrescriptionsByPatientId(patientId),
+        listPrescriptionsForPatient(patientId),
         getPatientDocumentsByPatientId(patientId),
       ])
 
@@ -748,6 +812,7 @@ export default function App() {
   async function loadPrescriptionDetail(prescription) {
     setNav('patients')
     setError('')
+    setPrescriptionConflict(null)
 
     try {
       const entries = await getDocEntriesByPrescriptionId(prescription.id)
@@ -1485,35 +1550,68 @@ async function handleImportChangeZip(event) {
 
     setSaving(true)
     setError('')
+    setSuccessMessage('')
+    prescriptionSaveBusyRef.current = true
 
     try {
       if (!prescriptionForm.issueDate || !prescriptionForm.remedy.trim()) {
         throw new Error('Bitte Ausstellungsdatum und Heilmittel ausfüllen.')
       }
+      if (!cloudUser) throw new Error('Bitte erneut anmelden.')
+      if (prescriptionConflict) {
+        throw new Error('Diese Verordnung wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
+      }
 
-      const changedAt = markDataChanged()
-      await savePrescription(stampForSave({
-        ...prescriptionForm,
-        patientId: selectedPatient.id,
-        remedy: prescriptionForm.remedy.trim(),
-      }, changedAt))
+      const { prescription: saved, conflict } = await savePrescriptionToSupabase(
+        {
+          ...prescriptionForm,
+          id: selectedPrescription?.id || prescriptionForm.id || '',
+          remedy: prescriptionForm.remedy.trim(),
+        },
+        selectedPatient.id,
+        cloudUser.id,
+        selectedPrescription?.updatedAt || '',
+      )
 
-      const updatedPrescriptions = await getPrescriptionsByPatientId(selectedPatient.id)
-      setPrescriptions(updatedPrescriptions)
+      if (conflict) {
+        setPrescriptionConflict(conflict)
+        setError('Diese Verordnung wurde inzwischen auf einem anderen Gerät geändert. Deine Eingaben bleiben erhalten.')
+        return
+      }
 
-      const updatedPrescription = updatedPrescriptions.find(item => item.id === prescriptionForm.id)
+      setPrescriptions(current => {
+        const exists = current.some(item => item.id === saved.id)
+        const next = exists
+          ? current.map(item => item.id === saved.id ? saved : item)
+          : [...current, saved]
+        return next.sort((a, b) => (b.issueDate || '').localeCompare(a.issueDate || ''))
+      })
+      setPrescriptionConflict(null)
+      setSuccessMessage('Verordnung gespeichert und synchronisiert.')
 
-      if (updatedPrescription) {
-        setSelectedPrescription(updatedPrescription)
+      if (selectedPrescription) {
+        setSelectedPrescription(saved)
+        setPrescriptionForm(saved)
         setView('prescriptionDetail')
       } else {
+        setPrescriptionForm(EMPTY_PRESCRIPTION_FORM)
         setView('patientDetail')
       }
     } catch (e) {
       setError(e.message)
     } finally {
+      prescriptionSaveBusyRef.current = false
       setSaving(false)
     }
+  }
+
+  function handleLoadPrescriptionConflict() {
+    if (!prescriptionConflict) return
+    setSelectedPrescription(prescriptionConflict)
+    setPrescriptionForm(prescriptionConflict)
+    setPrescriptionConflict(null)
+    setError('')
+    setSuccessMessage('Aktueller Stand der Verordnung wurde geladen.')
   }
 
   async function handleSaveDocEntry(event) {
@@ -2377,6 +2475,8 @@ function openStoredFile(file) {
                       className="btn btn-green"
                       onClick={() => {
                         setPrescriptionForm(EMPTY_PRESCRIPTION_FORM)
+                        setSelectedPrescription(null)
+                        setPrescriptionConflict(null)
                         setView('prescriptionEdit')
                       }}
                     >
@@ -2431,6 +2531,7 @@ function openStoredFile(file) {
   className="btn btn-ghost"
   onClick={() => {
     setPrescriptionForm(selectedPrescription)
+    setPrescriptionConflict(null)
     setView('prescriptionEdit')
   }}
 >
@@ -2523,7 +2624,7 @@ function openStoredFile(file) {
   		onChange={value => setPatientForm(prev => ({ ...prev, birthDate: value }))}
 		/>
 
-                  <button className="btn btn-primary" disabled={saving}>
+                  <button className="btn btn-primary" disabled={saving || Boolean(patientConflict)}>
                     <Save size={16} />
                     {saving ? 'Speichern...' : 'Speichern'}
                   </button>
@@ -2676,6 +2777,19 @@ function openStoredFile(file) {
                     Abbrechen
                   </button>
 
+                  {prescriptionConflict && (
+                    <div className="sync-conflict-box">
+                      <strong>Änderung auf einem anderen Gerät erkannt.</strong>
+                      <p>Deine offenen Eingaben wurden nicht überschrieben.</p>
+                      <p>
+                        Aktueller Stand: {formatDate(prescriptionConflict.issueDate)} · {prescriptionConflict.remedy}
+                      </p>
+                      <button type="button" className="btn btn-ghost" onClick={handleLoadPrescriptionConflict}>
+                        Aktuellen Stand laden
+                      </button>
+                    </div>
+                  )}
+
                  <DateInput
   			value={prescriptionForm.issueDate}
   			onChange={value => setPrescriptionForm(prev => ({ ...prev, issueDate: value }))}
@@ -2688,7 +2802,7 @@ function openStoredFile(file) {
                     onChange={event => setPrescriptionForm(prev => ({ ...prev, remedy: event.target.value }))}
                   />
 
-                  <button className="btn btn-primary" disabled={saving}>
+                  <button className="btn btn-primary" disabled={saving || Boolean(prescriptionConflict)}>
                     <Save size={16} />
                     {saving ? 'Speichern...' : 'Speichern'}
                   </button>
