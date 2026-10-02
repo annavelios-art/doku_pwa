@@ -37,12 +37,12 @@ export async function getDocEntryFromSupabase(id) {
   return docEntryFromRow(data)
 }
 
-export async function saveDocEntryToSupabase(entry, prescriptionId, userId, expectedUpdatedAt = '') {
-  if (!entry.id) {
+export async function saveDocEntryToSupabase(entry, prescriptionId, userId, expectedUpdatedAt = '', mode = 'auto') {
+  if (mode === 'insert' || !entry.id) {
     const { data, error } = await supabase
       .from('doc_entries')
       .insert({
-        id: crypto.randomUUID(),
+        id: entry.id || crypto.randomUUID(),
         prescription_id: prescriptionId,
         entry_date: entry.entryDate || null,
         text: entry.text?.trim() || '',
