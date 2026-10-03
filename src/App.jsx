@@ -61,6 +61,9 @@ import {
   loadEncryptedOfflineSnapshot, queueEncryptedOfflineDocEntry,
   removeEncryptedOfflineOutboxItem, saveEncryptedOfflineSnapshot,
 } from './lib/v2EncryptedOfflineLab'
+import {
+  createEncryptedSupabaseBackup, verifyEncryptedSupabaseBackup,
+} from './lib/v2EncryptedBackup'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -615,6 +618,13 @@ export default function App() {
   const [cryptoLabFileUrl, setCryptoLabFileUrl] = useState('')
   const [cryptoOfflineAudit, setCryptoOfflineAudit] = useState(null)
   const [cryptoOfflinePractice, setCryptoOfflinePractice] = useState(null)
+  const [cloudBackupPassphrase, setCloudBackupPassphrase] = useState('')
+  const [cloudBackupPassphraseConfirm, setCloudBackupPassphraseConfirm] = useState('')
+  const [cloudBackupBusy, setCloudBackupBusy] = useState(false)
+  const [cloudBackupProgress, setCloudBackupProgress] = useState('')
+  const [cloudBackupSummary, setCloudBackupSummary] = useState(null)
+  const [cloudBackupVerification, setCloudBackupVerification] = useState(null)
+  const [cloudBackupVerificationFile, setCloudBackupVerificationFile] = useState('')
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -622,6 +632,7 @@ export default function App() {
   const changeZipImportRef = useRef(null)
   const migrationInputRef = useRef(null)
   const migrationBackupRef = useRef(null)
+  const encryptedCloudBackupInputRef = useRef(null)
   const cryptoPracticeKeyRef = useRef(null)
   const [userRole, setUserRole] = useState(() => window.localStorage.getItem('pwaUserRole') || USER_ROLES.OWNER)
   const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
@@ -2791,6 +2802,98 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('Lokaler Verschlüsselungstest wurde zurückgesetzt.')
   }
 
+  function formatByteCount(bytes) {
+    const value = Number(bytes || 0)
+    if (value < 1024) return `${value} B`
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  async function handleCreateEncryptedCloudBackup() {
+    setError('')
+    setSuccessMessage('')
+    setCloudBackupProgress('')
+    setCloudBackupSummary(null)
+    setCloudBackupVerification(null)
+
+    if (!cloudUser) {
+      setError('Bitte zuerst bei Supabase anmelden.')
+      return
+    }
+    if (cloudBackupPassphrase !== cloudBackupPassphraseConfirm) {
+      setError('Die beiden Backup-Passwörter stimmen nicht überein.')
+      return
+    }
+    if (cloudBackupPassphrase.length < 16) {
+      setError('Das Backup-Passwort muss mindestens 16 Zeichen lang sein.')
+      return
+    }
+
+    setCloudBackupBusy(true)
+
+    try {
+      const result = await createEncryptedSupabaseBackup(
+        cloudUser.id,
+        cloudBackupPassphrase,
+        setCloudBackupProgress,
+      )
+
+      const url = URL.createObjectURL(result.zipBlob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = result.fileName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+
+      setCloudBackupSummary(result.summary)
+      setCloudBackupPassphraseConfirm('')
+      setSuccessMessage(
+        'Verschlüsseltes Supabase-Vollbackup erstellt. Bitte die heruntergeladene ZIP jetzt direkt mit dem Wiederherstellungstest prüfen.',
+      )
+    } catch (e) {
+      setError(`Verschlüsseltes Cloud-Backup fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCloudBackupBusy(false)
+    }
+  }
+
+  async function handleVerifyEncryptedCloudBackup(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setError('')
+    setSuccessMessage('')
+    setCloudBackupVerification(null)
+    setCloudBackupVerificationFile(file.name)
+
+    if (!cloudBackupPassphrase) {
+      setError('Bitte das Backup-Passwort eingeben, mit dem diese ZIP erstellt wurde.')
+      return
+    }
+
+    setCloudBackupBusy(true)
+
+    try {
+      const result = await verifyEncryptedSupabaseBackup(
+        file,
+        cloudBackupPassphrase,
+        setCloudBackupProgress,
+      )
+
+      setCloudBackupVerification(result)
+      setSuccessMessage(
+        'Wiederherstellungstest bestanden: Datenstruktur, Beziehungen und jede gesicherte Datei wurden lokal entschlüsselt und geprüft. Es wurde nichts nach Supabase zurückgeschrieben.',
+      )
+    } catch (e) {
+      setError(`Wiederherstellungstest fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCloudBackupBusy(false)
+    }
+  }
+
   async function handleSelectMigrationZip(event) {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -4298,6 +4401,120 @@ function openStoredFile(file) {
                         </button>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {isOwner && (
+                  <div className="backup-card">
+                    <h3>🔐 Vollständiges verschlüsseltes Supabase-Backup</h3>
+                    <p>
+                      Liest den aktuellen Praxisbestand direkt aus Supabase einschließlich Bilder, Befunde und
+                      Bibliotheksdateien. Alles wird erst hier im Browser mit einem eigenen Backup-Passwort
+                      verschlüsselt und anschließend als ZIP gespeichert.
+                    </p>
+
+                    <div className="stack-sm">
+                      <input
+                        className="field"
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="Backup-Passwort (mindestens 16 Zeichen)"
+                        value={cloudBackupPassphrase}
+                        onChange={event => setCloudBackupPassphrase(event.target.value)}
+                      />
+                      <input
+                        className="field"
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="Backup-Passwort wiederholen"
+                        value={cloudBackupPassphraseConfirm}
+                        onChange={event => setCloudBackupPassphraseConfirm(event.target.value)}
+                      />
+
+                      <button
+                        type="button"
+                        className="btn btn-green"
+                        onClick={handleCreateEncryptedCloudBackup}
+                        disabled={cloudBackupBusy || !cloudUser}
+                      >
+                        {cloudBackupBusy ? 'Backup läuft …' : 'Verschlüsseltes Supabase-Vollbackup erstellen'}
+                      </button>
+
+                      <p className="muted">
+                        Das Backup-Passwort wird nicht gespeichert und nicht an Supabase übertragen.
+                        Bitte nicht hier im Chat mitteilen. Ohne dieses Passwort ist die ZIP später nicht lesbar.
+                      </p>
+
+                      {cloudBackupProgress && (
+                        <div className="sync-status">
+                          <strong>Status</strong>
+                          <span>{cloudBackupProgress}</span>
+                        </div>
+                      )}
+
+                      {cloudBackupSummary && (
+                        <div className="sync-status sync-status-active">
+                          <strong>Backup erstellt</strong>
+                          <span>
+                            Patienten: {cloudBackupSummary.counts.patients} ·
+                            {' '}Verordnungen: {cloudBackupSummary.counts.prescriptions} ·
+                            {' '}Doku: {cloudBackupSummary.counts.docEntries}
+                          </span>
+                          <span>
+                            Doku-Bilder: {cloudBackupSummary.counts.docEntryImages} ·
+                            {' '}Befunde: {cloudBackupSummary.counts.patientDocuments} ·
+                            {' '}Bibliothek: {cloudBackupSummary.counts.libraryItems}
+                          </span>
+                          <span>
+                            Dateieinträge: {cloudBackupSummary.fileCount} ·
+                            {' '}Dateidaten: {formatByteCount(cloudBackupSummary.totalPlainFileBytes)} ·
+                            {' '}ZIP: {formatByteCount(cloudBackupSummary.zipBytes)}
+                          </span>
+                          {cloudBackupSummary.missingDeletedFiles > 0 && (
+                            <span>
+                              Hinweis: {cloudBackupSummary.missingDeletedFiles} bereits gelöschte Dateireferenz(en)
+                              hatten erwartungsgemäß keine Datei mehr im Storage.
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => encryptedCloudBackupInputRef.current?.click()}
+                        disabled={cloudBackupBusy}
+                      >
+                        Heruntergeladene ZIP vollständig prüfen
+                      </button>
+
+                      <input
+                        ref={encryptedCloudBackupInputRef}
+                        type="file"
+                        accept=".zip,application/zip"
+                        className="hidden"
+                        onChange={handleVerifyEncryptedCloudBackup}
+                      />
+
+                      {cloudBackupVerification && (
+                        <div className="sync-status sync-status-active">
+                          <strong>✅ Wiederherstellungstest bestanden</strong>
+                          <span>{cloudBackupVerificationFile}</span>
+                          <span>
+                            Patienten: {cloudBackupVerification.counts.patients} ·
+                            {' '}Verordnungen: {cloudBackupVerification.counts.prescriptions} ·
+                            {' '}Doku: {cloudBackupVerification.counts.docEntries}
+                          </span>
+                          <span>
+                            Dateien geprüft: {cloudBackupVerification.verifiedFiles} ·
+                            {' '}geprüfte Dateidaten: {formatByteCount(cloudBackupVerification.verifiedBytes)}
+                          </span>
+                          <span>
+                            Dabei wurden keinerlei Tabellen oder Dateien in Supabase verändert.
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
