@@ -283,6 +283,8 @@ export async function createEncryptedV3Backup(userId, passphrase, onProgress) {
       backedUpFiles: verifiedSourceFiles,
       missingDeletedFiles,
       totalSourceCipherBytes,
+      totalPlainFileBytes: totalSourceCipherBytes,
+      encryptedFiles: verifiedSourceFiles,
       zipBytes: zipBlob.size,
       exportedAt,
     },
