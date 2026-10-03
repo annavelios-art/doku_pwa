@@ -87,6 +87,7 @@ import {
   inspectV3MirrorOutboxRaw, removeV3MirrorOutboxItem,
 } from './lib/v3MirrorOfflineDb'
 import {
+  applyV3PrimaryOfflineItem, createEncryptedV3PrimaryOfflineItem,
   restoreV3Patient, saveV3DocEntry, saveV3LibraryItem, saveV3Patient,
   saveV3PatientDocument, saveV3Prescription, softDeleteV3Patient,
   syncV3DocEntryImages,
@@ -1632,6 +1633,7 @@ export default function App() {
       )
 
       for (const item of mirrorItems) {
+        if (item.target === 'primary') continue
         if (item.userId && item.userId !== cloudUser.id) continue
         if (legacyPendingIds.has(item.id)) continue
 
@@ -1657,6 +1659,76 @@ export default function App() {
       if (mirrored > 0) {
         setV3MirrorLastMessage(
           `🪞 ${mirrored} Offline-Änderung${mirrored === 1 ? '' : 'en'} nach V3 gespiegelt und geprüft.`,
+        )
+      }
+    } finally {
+      v3MirrorFlushBusyRef.current = false
+    }
+  }
+
+  async function flushV3PrimaryOutbox() {
+    if (
+      !cloudUser ||
+      !navigator.onLine ||
+      !v3PracticeKeyRef.current ||
+      !v3PrimaryModeRef.current ||
+      v3MirrorFlushBusyRef.current
+    ) return
+
+    v3MirrorFlushBusyRef.current = true
+    let synced = 0
+
+    try {
+      const items = await getV3MirrorOutboxItems()
+
+      for (const item of items) {
+        if (item.target !== 'primary') continue
+        if (item.userId && item.userId !== cloudUser.id) continue
+
+        try {
+          const result = await applyV3PrimaryOfflineItem(
+            item,
+            cloudUser.id,
+            v3PracticeKeyRef.current,
+          )
+
+          const conflict = result.conflict
+          if (conflict) {
+            if (item.kind === 'patient') setPatientConflict(conflict)
+            if (item.kind === 'prescription') setPrescriptionConflict(conflict)
+            if (item.kind === 'docEntry') setDocConflict(conflict)
+            setError(
+              'Eine Offline-Änderung hat einen V3-Konflikt und wurde nicht überschrieben.',
+            )
+            break
+          }
+
+          if (result.patient) await cachePatient({ ...result.patient, pendingSync: false })
+          if (result.prescription) await cachePrescription({ ...result.prescription, pendingSync: false })
+          if (result.entry) await cacheDocEntry({ ...result.entry, pendingSync: false })
+
+          await removeV3MirrorOutboxItem(item.id)
+          synced += 1
+        } catch (e) {
+          if (isConnectivityError(e)) break
+          setError(`V3-Offline-Synchronisation: ${e.message}`)
+          break
+        }
+      }
+
+      await refreshV3MirrorOutboxCount()
+
+      if (synced > 0) {
+        await refreshV3BridgeStatus()
+        await loadListData()
+        const patient = selectedPatientRef.current
+        if (patient?.id) await loadPatientDetail(patient.id)
+        const prescription = selectedPrescriptionRef.current
+        if (prescription?.id) await loadPrescriptionDetail(prescription)
+        setSuccessMessage(
+          synced === 1
+            ? '1 Offline-Änderung wurde direkt verschlüsselt nach V3 synchronisiert.'
+            : `${synced} Offline-Änderungen wurden direkt verschlüsselt nach V3 synchronisiert.`,
         )
       }
     } finally {
