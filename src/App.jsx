@@ -66,6 +66,9 @@ import {
   createEncryptedSupabaseBackup, verifyEncryptedSupabaseBackup,
 } from './lib/v2EncryptedBackup'
 import {
+  createEncryptedV3Backup, verifyEncryptedV3Backup,
+} from './lib/v3EncryptedBackup'
+import {
   createV3Keyring, getV3EncryptedCounts, loadV3Keyring,
 } from './lib/v3EncryptedPractice'
 import {
@@ -3826,11 +3829,17 @@ async function handleImportChangeZip(event) {
     setCloudBackupBusy(true)
 
     try {
-      const result = await createEncryptedSupabaseBackup(
-        cloudUser.id,
-        cloudBackupPassphrase,
-        setCloudBackupProgress,
-      )
+      const result = v3PrimaryModeRef.current
+        ? await createEncryptedV3Backup(
+            cloudUser.id,
+            cloudBackupPassphrase,
+            setCloudBackupProgress,
+          )
+        : await createEncryptedSupabaseBackup(
+            cloudUser.id,
+            cloudBackupPassphrase,
+            setCloudBackupProgress,
+          )
 
       const url = URL.createObjectURL(result.zipBlob)
       const link = document.createElement('a')
@@ -3871,11 +3880,17 @@ async function handleImportChangeZip(event) {
     setCloudBackupBusy(true)
 
     try {
-      const result = await verifyEncryptedSupabaseBackup(
-        file,
-        cloudBackupPassphrase,
-        setCloudBackupProgress,
-      )
+      const result = file.name.startsWith('PhysioOptima_V3_Backup_')
+        ? await verifyEncryptedV3Backup(
+            file,
+            cloudBackupPassphrase,
+            setCloudBackupProgress,
+          )
+        : await verifyEncryptedSupabaseBackup(
+            file,
+            cloudBackupPassphrase,
+            setCloudBackupProgress,
+          )
 
       setCloudBackupVerification(result)
       setSuccessMessage(
@@ -6344,11 +6359,11 @@ function openStoredFile(file) {
 
                 {isOwner && (
                   <div className="backup-card">
-                    <h3>🔐 Vollständiges verschlüsseltes Supabase-Backup</h3>
+                    <h3>🔐 Vollständiges verschlüsseltes {v3PrimaryMode ? 'V3-' : 'Supabase-'}Backup</h3>
                     <p>
-                      Liest den aktuellen Praxisbestand direkt aus Supabase einschließlich Bilder, Befunde und
-                      Bibliotheksdateien. Alles wird erst hier im Browser mit einem eigenen Backup-Passwort
-                      verschlüsselt und anschließend als ZIP gespeichert.
+                      {v3PrimaryMode
+                        ? 'Sichert den aktuellen verschlüsselten V3-Praxisbestand einschließlich Praxisschlüssel-Keyring und aller V3-Dateien. Das ZIP erhält zusätzlich ein eigenes Backup-Passwort.'
+                        : 'Liest den aktuellen Praxisbestand direkt aus Supabase einschließlich Bilder, Befunde und Bibliotheksdateien. Alles wird erst hier im Browser mit einem eigenen Backup-Passwort verschlüsselt und anschließend als ZIP gespeichert.'}
                     </p>
 
                     <div className="stack-sm">
@@ -6375,7 +6390,11 @@ function openStoredFile(file) {
                         onClick={handleCreateEncryptedCloudBackup}
                         disabled={cloudBackupBusy || !cloudUser}
                       >
-                        {cloudBackupBusy ? 'Backup läuft …' : 'Verschlüsseltes Supabase-Vollbackup erstellen'}
+                        {cloudBackupBusy
+                          ? 'Backup läuft …'
+                          : v3PrimaryMode
+                            ? 'Verschlüsseltes V3-Vollbackup erstellen'
+                            : 'Verschlüsseltes Supabase-Vollbackup erstellen'}
                       </button>
 
                       <p className="muted">
@@ -6456,7 +6475,7 @@ function openStoredFile(file) {
                   </div>
                 )}
 
-                {isOwner && (
+                {isOwner && !v3PrimaryMode && (
                   <div className="backup-card">
                     <h3>Einmalige Migration: altes ZIP → Supabase</h3>
                     <p>
@@ -6533,13 +6552,16 @@ function openStoredFile(file) {
                   </p>
 
                   <div className="stack-sm">
-                    <button className="btn btn-secondary" onClick={handleExportBackup}>
+                    <button className="btn btn-secondary" onClick={handleExportBackup} disabled={v3PrimaryMode}>
                       ZIP-Backup exportieren
                     </button>
 
-                    <button className="btn btn-ghost" onClick={() => importInputRef.current?.click()}>
+                    <button className="btn btn-ghost" onClick={() => importInputRef.current?.click()} disabled={v3PrimaryMode}>
                       ZIP-Backup importieren
                     </button>
+                    {v3PrimaryMode && (
+                      <p className="muted">Legacy-ZIP ist im V3-Hauptbetrieb deaktiviert. Bitte das verschlüsselte V3-Vollbackup oben verwenden.</p>
+                    )}
 
                     <input
                       ref={importInputRef}
@@ -6566,11 +6588,11 @@ function openStoredFile(file) {
                   </p>
 
                   <div className="stack-sm">
-                    <button className="btn btn-secondary" onClick={handleExportChangeZip}>
+                    <button className="btn btn-secondary" onClick={handleExportChangeZip} disabled={v3PrimaryMode}>
                       ZIP-Änderungen exportieren
                     </button>
 
-                    <button className="btn btn-ghost" onClick={() => changeZipImportRef.current?.click()}>
+                    <button className="btn btn-ghost" onClick={() => changeZipImportRef.current?.click()} disabled={v3PrimaryMode}>
                       ZIP-Änderungen importieren
                     </button>
 
