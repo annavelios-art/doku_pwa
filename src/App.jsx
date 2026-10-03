@@ -3121,10 +3121,67 @@ async function handleImportChangeZip(event) {
   }
 
   function handleLockV3PracticeKey() {
+    if (v3ReadModeRef.current) {
+      setError('Bitte zuerst den V3-Lesemodus beenden, bevor du den Praxisschlüssel sperrst.')
+      return
+    }
+
     v3PracticeKeyRef.current = null
     setV3Unlocked(false)
     setV3BridgeVerification(null)
     setSuccessMessage('V3-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
+  }
+
+  async function handleEnterV3ReadMode() {
+    setError('')
+    setSuccessMessage('')
+
+    if (!v3PracticeKeyRef.current || !v3Unlocked) {
+      setError('Bitte zuerst den V3-Praxisschlüssel entsperren.')
+      return
+    }
+    if (!v3Counts?.patients) {
+      setError('Der verschlüsselte V3-Parallelbestand ist noch leer.')
+      return
+    }
+    if (outboxCount > 0) {
+      setError(
+        `Bitte zuerst die ${outboxCount} wartenden Offline-Änderung(en) der bisherigen Praxis synchronisieren.`,
+      )
+      return
+    }
+
+    v3ReadModeRef.current = true
+    setV3ReadMode(true)
+    setSelectedPatient(null)
+    setSelectedPrescription(null)
+    setPrescriptions([])
+    setPatientDocuments([])
+    setDocEntries([])
+    setDocEntryImageCounts({})
+    setDocImages([])
+    setLibraryItems([])
+    setNav('patients')
+    setView('list')
+
+    await loadListData()
+  }
+
+  async function handleExitV3ReadMode() {
+    v3ReadModeRef.current = false
+    setV3ReadMode(false)
+    setSelectedPatient(null)
+    setSelectedPrescription(null)
+    setPrescriptions([])
+    setPatientDocuments([])
+    setDocEntries([])
+    setDocEntryImageCounts({})
+    setDocImages([])
+    setLibraryItems([])
+    setNav('patients')
+    setView('list')
+    setSuccessMessage('V3-Lesemodus beendet. Die bisherige Praxisansicht ist wieder aktiv.')
+    await loadListData(true)
   }
 
   async function handleBuildV3ParallelBridge() {
@@ -4284,6 +4341,23 @@ function openStoredFile(file) {
             {error && <p className="msg msg-error">{error}</p>}
             {successMessage && <p className="msg msg-success">{successMessage}</p>}
 
+            {v3ReadMode && (
+              <div className="sync-status sync-status-active">
+                <strong>🔒 V3-Lesemodus aktiv</strong>
+                <span>
+                  Diese Ansicht liest ausschließlich den verschlüsselten V3-Parallelbestand.
+                  Patientendaten werden erst auf diesem Gerät entschlüsselt. Bearbeiten und Löschen sind gesperrt.
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={handleExitV3ReadMode}
+                >
+                  V3-Lesemodus beenden
+                </button>
+              </div>
+            )}
+
             {nav === 'exercises' && <section className="surface-card stack-lg">
               <h2 className="section-title">Übungen</h2>
               <p className="muted">Dieser Bereich wird später erweitert.</p>
@@ -4598,6 +4672,17 @@ function openStoredFile(file) {
                                   Alte Tabellen/Dateien: unverändert vorhanden.
                                 </span>
                               </div>
+                            )}
+
+                            {!v3ReadMode && (v3Counts?.patients ?? 0) > 0 && (
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={handleEnterV3ReadMode}
+                                disabled={v3BridgeBusy}
+                              >
+                                🔒 V3-Lesemodus starten
+                              </button>
                             )}
 
                             <button
