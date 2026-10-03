@@ -890,6 +890,50 @@ export default function App() {
   useEffect(() => {
     if (!cloudUser) return undefined
 
+    const canRefreshV3 = () =>
+      v3PrimaryModeRef.current && Boolean(v3PracticeKeyRef.current)
+
+    const refreshPatientScope = () => {
+      if (!canRefreshV3()) return
+      void loadListData()
+      const patient = selectedPatientRef.current
+      if (patient?.id) void loadPatientDetail(patient.id)
+    }
+
+    const refreshPrescriptionScope = () => {
+      if (!canRefreshV3()) return
+      const prescription = selectedPrescriptionRef.current
+      if (prescription?.id) {
+        void loadPrescriptionDetail(prescription)
+      } else {
+        const patient = selectedPatientRef.current
+        if (patient?.id) void loadPatientDetail(patient.id)
+      }
+    }
+
+    const channel = supabase
+      .channel('doku-v3-primary')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'v3_patients' }, refreshPatientScope)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'v3_prescriptions' }, refreshPatientScope)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'v3_doc_entries' }, refreshPrescriptionScope)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'v3_doc_entry_images' }, refreshPrescriptionScope)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'v3_patient_documents' }, refreshPatientScope)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'v3_library_items' }, () => {
+        if (!canRefreshV3()) return
+        if (viewRef.current === 'libraryList') {
+          void loadLibraryItems(libraryCategoryRef.current)
+        }
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [cloudUser])
+
+  useEffect(() => {
+    if (!cloudUser) return undefined
+
     const channel = supabase
       .channel('doku-v2-patients')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, payload => {
