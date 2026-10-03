@@ -5610,21 +5610,23 @@ function openStoredFile(file) {
                   <article className="surface-card card-patient-documents">
                     <div className="row-between prescription-header">
                       <h3 className="section-subtitle">Dokumente / Befunde</h3>
-                      <button
-                        className="btn btn-green"
-                        onClick={() => {
-                          setPatientDocumentForm({
-                            ...EMPTY_PATIENT_DOCUMENT_FORM,
-                            documentDate: todayIso(),
-                          })
-                          setPatientDocumentBase(null)
-                          setPatientDocumentConflict(null)
-                          setView('patientDocumentEdit')
-                        }}
-                      >
-                        <Plus size={14} />
-                        Dokument
-                      </button>
+                      {!v3ReadMode && (
+                        <button
+                          className="btn btn-green"
+                          onClick={() => {
+                            setPatientDocumentForm({
+                              ...EMPTY_PATIENT_DOCUMENT_FORM,
+                              documentDate: todayIso(),
+                            })
+                            setPatientDocumentBase(null)
+                            setPatientDocumentConflict(null)
+                            setView('patientDocumentEdit')
+                          }}
+                        >
+                          <Plus size={14} />
+                          Dokument
+                        </button>
+                      )}
                     </div>
 
                     <div className="stack">
@@ -5641,6 +5643,13 @@ function openStoredFile(file) {
                             tone="patient"
                             onOpen={async () => {
   try {
+    if (v3ReadModeRef.current) {
+      if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+      const loaded = await loadV3PatientDocumentFile(item, v3PracticeKeyRef.current)
+      openStoredFile(loaded.file)
+      return
+    }
+
     const loaded = await loadPatientDocumentFile(item)
     setPatientDocumentForm(loaded)
     setPatientDocumentBase(item)
