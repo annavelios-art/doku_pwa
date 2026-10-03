@@ -86,6 +86,10 @@ import {
   enqueueV3MirrorOutbox, getV3MirrorOutboxCount, getV3MirrorOutboxItems,
   inspectV3MirrorOutboxRaw, removeV3MirrorOutboxItem,
 } from './lib/v3MirrorOfflineDb'
+import {
+  saveV3DocEntry, saveV3LibraryItem, saveV3Patient, saveV3PatientDocument,
+  saveV3Prescription, syncV3DocEntryImages,
+} from './lib/v3PrimaryStore'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -664,6 +668,7 @@ export default function App() {
   const [v3MirrorLastMessage, setV3MirrorLastMessage] = useState('')
   const [v3MirrorOutboxCount, setV3MirrorOutboxCount] = useState(0)
   const [v3MirrorOfflineAudit, setV3MirrorOfflineAudit] = useState(null)
+  const [v3PrimaryMode, setV3PrimaryMode] = useState(false)
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -677,6 +682,7 @@ export default function App() {
   const v3PracticeKeyRef = useRef(null)
   const v3ReadModeRef = useRef(false)
   const v3MirrorModeRef = useRef(false)
+  const v3PrimaryModeRef = useRef(false)
   const [userRole, setUserRole] = useState(() => window.localStorage.getItem('pwaUserRole') || USER_ROLES.OWNER)
   const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
   const [lastModifiedAt, setLastModifiedAt] = useState(() => readStoredTimestamp(LAST_MODIFIED_STORAGE_KEY))
@@ -721,7 +727,7 @@ export default function App() {
   const libraryCategoryRef = useRef('nachbehandlung')
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
-  const canManageTrash = isOwner && Boolean(cloudUser) && !v3ReadMode
+  const canManageTrash = isOwner && Boolean(cloudUser) && !v3ReadMode && !v3PrimaryMode
 
   const filteredPatients = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -787,8 +793,10 @@ export default function App() {
       v3PracticeKeyRef.current = null
       v3ReadModeRef.current = false
       v3MirrorModeRef.current = false
+      v3PrimaryModeRef.current = false
       setV3ReadMode(false)
       setV3MirrorMode(false)
+      setV3PrimaryMode(false)
       setV3Unlocked(false)
       return () => { active = false }
     }
@@ -859,8 +867,10 @@ export default function App() {
         v3CandidateBundleRef.current = null
         v3ReadModeRef.current = false
         v3MirrorModeRef.current = false
+        v3PrimaryModeRef.current = false
         setV3ReadMode(false)
         setV3MirrorMode(false)
+        setV3PrimaryMode(false)
         setV3Unlocked(false)
         setV3Keyring(null)
         setV3Counts(null)
@@ -3259,6 +3269,10 @@ async function handleImportChangeZip(event) {
     }
     if (v3MirrorModeRef.current) {
       setError('Bitte zuerst den V3-Schreibspiegel beenden, bevor du den Praxisschlüssel sperrst.')
+      return
+    }
+    if (v3PrimaryModeRef.current) {
+      setError('Bitte zuerst die V3-Hauptbetrieb-Testfahrt beenden, bevor du den Praxisschlüssel sperrst.')
       return
     }
 
