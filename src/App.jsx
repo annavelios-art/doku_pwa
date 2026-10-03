@@ -4504,6 +4504,33 @@ async function handleImportChangeZip(event) {
       if (!libraryForm.title.trim()) throw new Error('Bitte eine kurze Überschrift eintragen.')
       if (!libraryForm.file) throw new Error('Bitte eine Datei auswählen.')
       if (!cloudUser) throw new Error('Bitte erneut anmelden.')
+
+      if (v3PrimaryModeRef.current) {
+        if (!navigator.onLine) throw new Error('Die V3-Hauptbetrieb-Testfahrt speichert Dateien in dieser Stufe nur online.')
+        if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+
+        const savedV3 = await saveV3LibraryItem(
+          {
+            ...libraryForm,
+            title: libraryForm.title.trim(),
+            note: libraryForm.note.trim(),
+          },
+          libraryCategory,
+          cloudUser.id,
+          v3PracticeKeyRef.current,
+        )
+
+        setLibraryItems(current => {
+          const next = [savedV3, ...current.filter(item => item.id !== savedV3.id)]
+          return next.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+        })
+        setLibraryForm({ ...EMPTY_LIBRARY_FORM, category: libraryCategory })
+        setView('libraryList')
+        await refreshV3BridgeStatus()
+        setSuccessMessage('🚗 V3-Hauptbetrieb: Bibliotheksdatei direkt verschlüsselt in V3 gespeichert. Alte Klartexttabelle unverändert.')
+        return
+      }
+
       ensureV3MirrorWriteReady()
 
       const saved = await saveLibraryItemToSupabase(
@@ -4561,6 +4588,40 @@ async function handleImportChangeZip(event) {
       if (patientDocumentConflict) {
         throw new Error('Dieses Dokument wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
       }
+
+      if (v3PrimaryModeRef.current) {
+        if (!navigator.onLine) throw new Error('Die V3-Hauptbetrieb-Testfahrt speichert Dateien in dieser Stufe nur online.')
+        if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+
+        const { document: savedV3, conflict: conflictV3 } = await saveV3PatientDocument(
+          {
+            ...patientDocumentForm,
+            id: patientDocumentBase?.id || patientDocumentForm.id || '',
+            title: patientDocumentForm.title.trim(),
+            note: patientDocumentForm.note.trim(),
+          },
+          selectedPatient.id,
+          cloudUser.id,
+          v3PracticeKeyRef.current,
+          patientDocumentBase?.updatedAt || '',
+        )
+
+        if (conflictV3) {
+          setPatientDocumentConflict(conflictV3)
+          setError('V3-Konflikt: Dieses Dokument wurde inzwischen auf einem anderen Gerät geändert.')
+          return
+        }
+
+        await reloadPatientDocuments(selectedPatient.id)
+        await refreshV3BridgeStatus()
+        setPatientDocumentConflict(null)
+        setPatientDocumentBase(savedV3)
+        setPatientDocumentForm(savedV3)
+        setView('patientDetail')
+        setSuccessMessage('🚗 V3-Hauptbetrieb: Dokument/Befund direkt verschlüsselt in V3 gespeichert. Alte Klartexttabelle unverändert.')
+        return
+      }
+
       ensureV3MirrorWriteReady()
 
       const { document: saved, conflict } = await savePatientDocumentToSupabase(
