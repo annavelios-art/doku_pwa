@@ -240,9 +240,15 @@ export async function encryptPracticeText(text, practiceKey, context = 'physioop
   }
 }
 
-export async function decryptPracticeText(envelope, practiceKey) {
+export async function decryptPracticeText(envelope, practiceKey, expectedContext = '') {
   if (!practiceKey) throw new Error('Praxisschlüssel ist nicht entsperrt.')
-  const plain = await aesDecryptBytes(envelope, practiceKey, envelope.aad || '')
+
+  if (expectedContext && envelope?.aad !== expectedContext) {
+    throw new Error('Der verschlüsselte Datensatz gehört nicht an diese Stelle.')
+  }
+
+  const context = expectedContext || envelope?.aad || ''
+  const plain = await aesDecryptBytes(envelope, practiceKey, context)
   return decoder.decode(plain)
 }
 
