@@ -4447,6 +4447,25 @@ function openStoredFile(file) {
               </div>
             )}
 
+            {v3MirrorMode && (
+              <div className="sync-status sync-status-active">
+                <strong>🪞 V3-Schreibspiegel aktiv</strong>
+                <span>
+                  Speichern schreibt zuerst in die bisherige Praxis und spiegelt den bestätigten Stand danach
+                  lokal verschlüsselt nach V3. Der Spiegel wird sofort wieder entschlüsselt und geprüft.
+                </span>
+                {v3MirrorLastMessage && <span>{v3MirrorLastMessage}</span>}
+                <span>Offline-Speichern ist in dieser Teststufe absichtlich gesperrt.</span>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={handleStopV3MirrorMode}
+                >
+                  V3-Schreibspiegel beenden
+                </button>
+              </div>
+            )}
+
             {nav === 'exercises' && <section className="surface-card stack-lg">
               <h2 className="section-title">Übungen</h2>
               <p className="muted">Dieser Bereich wird später erweitert.</p>
@@ -4763,14 +4782,36 @@ function openStoredFile(file) {
                               </div>
                             )}
 
-                            {!v3ReadMode && (v3Counts?.patients ?? 0) > 0 && (
+                            {!v3ReadMode && !v3MirrorMode && (v3Counts?.patients ?? 0) > 0 && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  onClick={handleEnterV3ReadMode}
+                                  disabled={v3BridgeBusy}
+                                >
+                                  🔒 V3-Lesemodus starten
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="btn btn-green"
+                                  onClick={handleStartV3MirrorMode}
+                                  disabled={v3BridgeBusy}
+                                >
+                                  🪞 V3-Schreibspiegel starten
+                                </button>
+                              </>
+                            )}
+
+                            {v3MirrorMode && (
                               <button
                                 type="button"
                                 className="btn btn-secondary"
-                                onClick={handleEnterV3ReadMode}
+                                onClick={handleStopV3MirrorMode}
                                 disabled={v3BridgeBusy}
                               >
-                                🔒 V3-Lesemodus starten
+                                V3-Schreibspiegel beenden
                               </button>
                             )}
 
