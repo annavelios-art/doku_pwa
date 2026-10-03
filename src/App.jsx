@@ -3571,6 +3571,7 @@ async function handleImportChangeZip(event) {
       }
       if (!cloudUser) throw new Error('Bitte erneut anmelden.')
       if (patientConflict) throw new Error('Dieser Patient wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
+      ensureV3MirrorWriteReady()
 
       const isNew = !selectedPatient && !patientForm.id
       const id = selectedPatient?.id || patientForm.id || crypto.randomUUID()
@@ -3643,6 +3644,9 @@ async function handleImportChangeZip(event) {
         )
       } catch (e) {
         if (isConnectivityError(e)) {
+          if (v3MirrorModeRef.current) {
+            throw new Error('Internetverbindung abgebrochen. Im V3-Schreibspiegel wurde nichts offline gespeichert.')
+          }
           await saveOffline()
           return
         }
@@ -3668,7 +3672,6 @@ async function handleImportChangeZip(event) {
         )
       })
       setPatientConflict(null)
-      setSuccessMessage('Patient gespeichert und synchronisiert.')
 
       if (selectedPatient) await loadPatientDetail(saved.id)
       else {
@@ -3676,6 +3679,18 @@ async function handleImportChangeZip(event) {
         setPatientForm(EMPTY_PATIENT_FORM)
         setView('list')
       }
+
+      const mirrorOk = await runV3Mirror(
+        'Patient',
+        () => mirrorV3PatientById(saved.id, cloudUser.id, v3PracticeKeyRef.current),
+      )
+      setSuccessMessage(
+        v3MirrorModeRef.current
+          ? (mirrorOk
+              ? 'Patient gespeichert – 🪞 verschlüsselter V3-Spiegel geprüft.'
+              : 'Patient gespeichert. Der V3-Spiegel braucht eine erneute Spiegelung.')
+          : 'Patient gespeichert und synchronisiert.',
+      )
     } catch (e) {
       setError(e.message)
     } finally {
@@ -3776,6 +3791,7 @@ async function handleImportChangeZip(event) {
       if (prescriptionConflict) {
         throw new Error('Diese Verordnung wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
       }
+      ensureV3MirrorWriteReady()
 
       const isNew = !selectedPrescription && !prescriptionForm.id
       const id = selectedPrescription?.id || prescriptionForm.id || crypto.randomUUID()
@@ -3847,6 +3863,9 @@ async function handleImportChangeZip(event) {
         )
       } catch (e) {
         if (isConnectivityError(e)) {
+          if (v3MirrorModeRef.current) {
+            throw new Error('Internetverbindung abgebrochen. Im V3-Schreibspiegel wurde nichts offline gespeichert.')
+          }
           await saveOffline()
           return
         }
@@ -3870,7 +3889,6 @@ async function handleImportChangeZip(event) {
         return next.sort((a, b) => (b.issueDate || '').localeCompare(a.issueDate || ''))
       })
       setPrescriptionConflict(null)
-      setSuccessMessage('Verordnung gespeichert und synchronisiert.')
 
       if (selectedPrescription) {
         setSelectedPrescription(saved)
@@ -3880,6 +3898,18 @@ async function handleImportChangeZip(event) {
         setPrescriptionForm(EMPTY_PRESCRIPTION_FORM)
         setView('patientDetail')
       }
+
+      const mirrorOk = await runV3Mirror(
+        'Verordnung',
+        () => mirrorV3PrescriptionById(saved.id, cloudUser.id, v3PracticeKeyRef.current),
+      )
+      setSuccessMessage(
+        v3MirrorModeRef.current
+          ? (mirrorOk
+              ? 'Verordnung gespeichert – 🪞 verschlüsselter V3-Spiegel geprüft.'
+              : 'Verordnung gespeichert. Der V3-Spiegel braucht eine erneute Spiegelung.')
+          : 'Verordnung gespeichert und synchronisiert.',
+      )
     } catch (e) {
       setError(e.message)
     } finally {
@@ -3912,6 +3942,7 @@ async function handleImportChangeZip(event) {
       if (docConflict) {
         throw new Error('Dieser Doku-Eintrag wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
       }
+      ensureV3MirrorWriteReady()
 
       const currentImageIds = docImages.map(image => image.id).sort().join('|')
       const baseImageIds = docImageBaseIds.slice().sort().join('|')
@@ -3987,6 +4018,9 @@ async function handleImportChangeZip(event) {
         )
       } catch (e) {
         if (isConnectivityError(e)) {
+          if (v3MirrorModeRef.current) {
+            throw new Error('Internetverbindung abgebrochen. Im V3-Schreibspiegel wurde nichts offline gespeichert.')
+          }
           await saveOffline()
           return
         }
@@ -4027,8 +4061,19 @@ async function handleImportChangeZip(event) {
       setDocForm(saved)
       setDocBaseEntry(saved)
       setDocConflict(null)
-      setSuccessMessage('Doku gespeichert und synchronisiert.')
       setView('prescriptionDetail')
+
+      const mirrorOk = await runV3Mirror(
+        'Doku + Bilder',
+        () => mirrorV3DocEntryById(saved.id, cloudUser.id, v3PracticeKeyRef.current),
+      )
+      setSuccessMessage(
+        v3MirrorModeRef.current
+          ? (mirrorOk
+              ? 'Doku gespeichert – 🪞 Text und Bilder im verschlüsselten V3-Spiegel geprüft.'
+              : 'Doku gespeichert. Der V3-Spiegel braucht eine erneute Spiegelung.')
+          : 'Doku gespeichert und synchronisiert.',
+      )
     } catch (e) {
       setError(e.message)
     } finally {
