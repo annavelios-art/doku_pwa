@@ -253,6 +253,59 @@ export async function decryptPracticeText(envelope, practiceKey, expectedContext
 }
 
 
+export async function encryptBytesWithPassphrase(
+  bytes,
+  passphrase,
+  context = 'physiooptima:v2:encrypted-backup',
+) {
+  if (String(passphrase || '').length < 16) {
+    throw new Error('Das Backup-Passwort muss mindestens 16 Zeichen lang sein.')
+  }
+
+  const plainBytes = bytes instanceof Uint8Array
+    ? bytes
+    : new Uint8Array(bytes)
+  const salt = randomBytes(16)
+  const passwordKey = await derivePasswordKey(passphrase, salt)
+  const encrypted = await aesEncryptBytes(plainBytes, passwordKey, context)
+
+  return {
+    version: 1,
+    algorithm: 'AES-256-GCM',
+    kdf: 'PBKDF2-SHA256',
+    iterations: PBKDF2_ITERATIONS,
+    salt: bytesToBase64(salt),
+    aad: context,
+    ...encrypted,
+  }
+}
+
+export async function decryptBytesWithPassphrase(
+  envelope,
+  passphrase,
+  expectedContext = 'physiooptima:v2:encrypted-backup',
+) {
+  if (!passphrase) throw new Error('Bitte das Backup-Passwort eingeben.')
+  if (!envelope || envelope.version !== 1 || envelope.algorithm !== 'AES-256-GCM') {
+    throw new Error('Das verschlüsselte Backup hat ein unbekanntes Format.')
+  }
+  if (envelope.aad !== expectedContext) {
+    throw new Error('Dieses verschlüsselte Paket ist kein erwartetes PhysioOptima-Backup.')
+  }
+
+  try {
+    const salt = base64ToBytes(envelope.salt)
+    const passwordKey = await derivePasswordKey(
+      passphrase,
+      salt,
+      envelope.iterations || PBKDF2_ITERATIONS,
+    )
+    return aesDecryptBytes(envelope, passwordKey, expectedContext)
+  } catch {
+    throw new Error('Backup-Passwort falsch oder Backup beschädigt.')
+  }
+}
+
 export async function encryptPracticeBytes(bytes, practiceKey, context) {
   if (!practiceKey) throw new Error('Praxisschlüssel ist nicht entsperrt.')
   if (!context) throw new Error('Für Dateiverschlüsselung fehlt der technische Kontext.')
