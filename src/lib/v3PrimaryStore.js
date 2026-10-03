@@ -802,3 +802,146 @@ export async function restoreV3Patient(patientId, key) {
   const plain = await decryptJson(data.payload, key, patientAad(data))
   return patientFromPlain(data, plain)
 }
+
+
+function primaryOfflineAad(kind, entityId, parentId = '') {
+  return `physiooptima:v3:primary-outbox:${kind}:${entityId}:parent:${parentId || 'none'}:v1`
+}
+
+function primaryOfflinePlain(kind, record, parentId = '') {
+  if (kind === 'patient') {
+    return {
+      firstName: record.firstName || '',
+      lastName: record.lastName || '',
+      birthDate: record.birthDate || '',
+    }
+  }
+
+  if (kind === 'prescription') {
+    return {
+      issueDate: record.issueDate || '',
+      remedy: record.remedy || '',
+      patientId: parentId || record.patientId || '',
+    }
+  }
+
+  if (kind === 'docEntry') {
+    return {
+      entryDate: record.entryDate || '',
+      text: record.text || '',
+      prescriptionId: parentId || record.prescriptionId || '',
+    }
+  }
+
+  throw new Error(`Unbekannter V3-Offline-Typ: ${kind}`)
+}
+
+export async function createEncryptedV3PrimaryOfflineItem(
+  kind,
+  record,
+  parentId,
+  userId,
+  key,
+  mode = 'update',
+  expectedUpdatedAt = '',
+) {
+  if (!record?.id) throw new Error('V3-Offline-Outbox: Datensatz-ID fehlt.')
+  if (!key) throw new Error('V3-Offline-Outbox: Praxisschlüssel fehlt.')
+
+  const aad = primaryOfflineAad(kind, record.id, parentId)
+  const encryptedPayload = await encryptPracticeText(
+    JSON.stringify(primaryOfflinePlain(kind, record, parentId)),
+    key,
+    aad,
+  )
+
+  return {
+    id: `primary:${kind}:${record.id}`,
+    target: 'primary',
+    kind,
+    entityId: record.id,
+    parentId: parentId || '',
+    userId: userId || '',
+    mode,
+    expectedUpdatedAt: expectedUpdatedAt || '',
+    createdAt: record.createdAt || '',
+    updatedAt: record.updatedAt || '',
+    deletedAt: record.deletedAt || '',
+    encryptedPayload,
+  }
+}
+
+async function decryptV3PrimaryOfflineItem(item, key) {
+  if (!item?.encryptedPayload) {
+    throw new Error('V3-Offline-Outbox: verschlüsselter Inhalt fehlt.')
+  }
+
+  const aad = primaryOfflineAad(item.kind, item.entityId, item.parentId)
+  const text = await decryptPracticeText(item.encryptedPayload, key, aad)
+  return JSON.parse(text)
+}
+
+export async function applyV3PrimaryOfflineItem(item, userId, key) {
+  const plain = await decryptV3PrimaryOfflineItem(item, key)
+
+  if (item.kind === 'patient') {
+    const result = await saveV3Patient(
+      {
+        id: item.entityId,
+        firstName: plain.firstName || '',
+        lastName: plain.lastName || '',
+        birthDate: plain.birthDate || '',
+        createdAt: item.createdAt || '',
+        updatedAt: item.updatedAt || '',
+        deletedAt: item.deletedAt || '',
+      },
+      userId,
+      key,
+      item.expectedUpdatedAt || '',
+      item.mode || 'update',
+    )
+    return { kind: item.kind, ...result }
+  }
+
+  if (item.kind === 'prescription') {
+    const result = await saveV3Prescription(
+      {
+        id: item.entityId,
+        patientId: item.parentId || plain.patientId || '',
+        issueDate: plain.issueDate || '',
+        remedy: plain.remedy || '',
+        createdAt: item.createdAt || '',
+        updatedAt: item.updatedAt || '',
+        deletedAt: item.deletedAt || '',
+      },
+      item.parentId || plain.patientId || '',
+      userId,
+      key,
+      item.expectedUpdatedAt || '',
+      item.mode || 'update',
+    )
+    return { kind: item.kind, ...result }
+  }
+
+  if (item.kind === 'docEntry') {
+    const result = await saveV3DocEntry(
+      {
+        id: item.entityId,
+        prescriptionId: item.parentId || plain.prescriptionId || '',
+        entryDate: plain.entryDate || '',
+        text: plain.text || '',
+        createdAt: item.createdAt || '',
+        updatedAt: item.updatedAt || '',
+        deletedAt: item.deletedAt || '',
+      },
+      item.parentId || plain.prescriptionId || '',
+      userId,
+      key,
+      item.expectedUpdatedAt || '',
+      item.mode || 'update',
+    )
+    return { kind: item.kind, ...result }
+  }
+
+  throw new Error(`Unbekannter V3-Offline-Typ: ${item.kind}`)
+}
