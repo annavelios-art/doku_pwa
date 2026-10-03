@@ -3778,6 +3778,53 @@ async function handleImportChangeZip(event) {
       }
       if (!cloudUser) throw new Error('Bitte erneut anmelden.')
       if (patientConflict) throw new Error('Dieser Patient wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
+
+      if (v3PrimaryModeRef.current) {
+        if (!navigator.onLine) throw new Error('Die V3-Hauptbetrieb-Testfahrt speichert in dieser Stufe nur online.')
+        if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+
+        const isNewV3 = !selectedPatient && !patientForm.id
+        const idV3 = selectedPatient?.id || patientForm.id || crypto.randomUUID()
+        const modeV3 = isNewV3 ? 'insert' : 'update'
+        const expectedV3 = selectedPatient?.updatedAt || ''
+        const candidateV3 = {
+          ...patientForm,
+          id: idV3,
+          lastName: patientForm.lastName.trim(),
+          firstName: patientForm.firstName.trim(),
+        }
+
+        const { patient: savedV3, conflict: conflictV3 } = await saveV3Patient(
+          candidateV3,
+          cloudUser.id,
+          v3PracticeKeyRef.current,
+          expectedV3,
+          modeV3,
+        )
+
+        if (conflictV3) {
+          setPatientConflict(conflictV3)
+          setError('V3-Konflikt: Dieser Patient wurde inzwischen auf einem anderen Gerät geändert.')
+          return
+        }
+
+        await cachePatient(savedV3)
+        await refreshV3BridgeStatus()
+        setPatientConflict(null)
+
+        if (selectedPatient) {
+          await loadPatientDetail(savedV3.id)
+        } else {
+          setSelectedPatient(null)
+          setPatientForm(EMPTY_PATIENT_FORM)
+          setView('list')
+          await loadListData()
+        }
+
+        setSuccessMessage('🚗 V3-Hauptbetrieb: Patient direkt verschlüsselt in V3 gespeichert. Alte Klartexttabelle unverändert.')
+        return
+      }
+
       ensureV3MirrorWriteReady({ allowOffline: true })
 
       const isNew = !selectedPatient && !patientForm.id
@@ -4020,6 +4067,48 @@ async function handleImportChangeZip(event) {
       if (prescriptionConflict) {
         throw new Error('Diese Verordnung wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
       }
+
+      if (v3PrimaryModeRef.current) {
+        if (!navigator.onLine) throw new Error('Die V3-Hauptbetrieb-Testfahrt speichert in dieser Stufe nur online.')
+        if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+
+        const isNewV3 = !selectedPrescription && !prescriptionForm.id
+        const idV3 = selectedPrescription?.id || prescriptionForm.id || crypto.randomUUID()
+        const modeV3 = isNewV3 ? 'insert' : 'update'
+        const expectedV3 = selectedPrescription?.updatedAt || ''
+        const candidateV3 = {
+          ...prescriptionForm,
+          id: idV3,
+          patientId: selectedPatient.id,
+          remedy: prescriptionForm.remedy.trim(),
+        }
+
+        const { prescription: savedV3, conflict: conflictV3 } = await saveV3Prescription(
+          candidateV3,
+          selectedPatient.id,
+          cloudUser.id,
+          v3PracticeKeyRef.current,
+          expectedV3,
+          modeV3,
+        )
+
+        if (conflictV3) {
+          setPrescriptionConflict(conflictV3)
+          setError('V3-Konflikt: Diese Verordnung wurde inzwischen auf einem anderen Gerät geändert.')
+          return
+        }
+
+        await cachePrescription(savedV3)
+        await refreshV3BridgeStatus()
+        setPrescriptionConflict(null)
+        setSelectedPrescription(isNewV3 ? null : savedV3)
+        setPrescriptionForm(isNewV3 ? EMPTY_PRESCRIPTION_FORM : savedV3)
+        setView(isNewV3 ? 'patientDetail' : 'prescriptionDetail')
+        setPrescriptions(await listV3PrescriptionsForPatient(selectedPatient.id, v3PracticeKeyRef.current))
+        setSuccessMessage('🚗 V3-Hauptbetrieb: Verordnung direkt verschlüsselt in V3 gespeichert. Alte Klartexttabelle unverändert.')
+        return
+      }
+
       ensureV3MirrorWriteReady({ allowOffline: true })
 
       const isNew = !selectedPrescription && !prescriptionForm.id
@@ -4173,6 +4262,73 @@ async function handleImportChangeZip(event) {
       if (docConflict) {
         throw new Error('Dieser Doku-Eintrag wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
       }
+
+      if (v3PrimaryModeRef.current) {
+        if (!navigator.onLine) throw new Error('Die V3-Hauptbetrieb-Testfahrt speichert in dieser Stufe nur online.')
+        if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+
+        const isNewV3 = !docBaseEntry && !docForm.id
+        const idV3 = docBaseEntry?.id || docForm.id || crypto.randomUUID()
+        const modeV3 = isNewV3 ? 'insert' : 'update'
+        const expectedV3 = docBaseEntry?.updatedAt || ''
+        const candidateV3 = {
+          ...docForm,
+          id: idV3,
+          prescriptionId: selectedPrescription.id,
+          text: docForm.text.trim(),
+        }
+
+        const { entry: savedV3, conflict: conflictV3 } = await saveV3DocEntry(
+          candidateV3,
+          selectedPrescription.id,
+          cloudUser.id,
+          v3PracticeKeyRef.current,
+          expectedV3,
+          modeV3,
+        )
+
+        if (conflictV3) {
+          setDocConflict(conflictV3)
+          setError('V3-Konflikt: Dieser Doku-Eintrag wurde inzwischen auf einem anderen Gerät geändert.')
+          return
+        }
+
+        try {
+          await syncV3DocEntryImages(
+            savedV3.id,
+            docImages,
+            cloudUser.id,
+            v3PracticeKeyRef.current,
+            docImageBaseIds,
+          )
+        } catch (e) {
+          setDocForm(savedV3)
+          setDocBaseEntry(savedV3)
+          setError(`V3-Doku-Text wurde verschlüsselt gespeichert, aber die Bilder konnten nicht gespeichert werden: ${e.message}`)
+          return
+        }
+
+        const updatedEntriesV3 = await listV3DocEntriesForPrescription(
+          selectedPrescription.id,
+          v3PracticeKeyRef.current,
+        )
+        const countsV3 = await getV3DocEntryImageCountMap(updatedEntriesV3.map(entry => entry.id))
+        const imagesV3 = await loadV3DocEntryImages(savedV3.id, v3PracticeKeyRef.current)
+
+        await cacheDocEntry(savedV3)
+        await refreshV3BridgeStatus()
+        setDocEntries(updatedEntriesV3)
+        setDocEntryImageCounts(countsV3)
+        setDocImages(imagesV3)
+        setDocImageBaseIds(imagesV3.map(image => image.id))
+        setDocForm(savedV3)
+        setDocBaseEntry(savedV3)
+        setDocConflict(null)
+        setView('prescriptionDetail')
+        setSuccessMessage('🚗 V3-Hauptbetrieb: Doku und Bilder direkt verschlüsselt in V3 gespeichert. Alte Klartexttabellen unverändert.')
+        return
+      }
+
       ensureV3MirrorWriteReady({ allowOffline: true })
 
       const currentImageIds = docImages.map(image => image.id).sort().join('|')
