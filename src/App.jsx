@@ -832,7 +832,15 @@ export default function App() {
     // Klartexttabellen schreiben. Vor dem Produktionswechsel muss sie leer sein.
     void refreshOutboxCount()
     void refreshV3MirrorOutboxCount()
-    return undefined
+
+    const handleOnline = () => {
+      if (v3PrimaryModeRef.current && v3PracticeKeyRef.current) {
+        void flushV3PrimaryOutbox()
+      }
+    }
+
+    window.addEventListener('online', handleOnline)
+    return () => window.removeEventListener('online', handleOnline)
   }, [cloudUser])
 
   useEffect(() => {
@@ -1604,6 +1612,48 @@ export default function App() {
       await refreshV3MirrorOutboxCount()
       throw new Error(
         `Sicherheitsprüfung der V3-Spiegel-Outbox fehlgeschlagen: Klartextfund ${audit.leaks.join(', ')}`,
+      )
+    }
+
+    await refreshV3MirrorOutboxCount()
+  }
+
+  async function queueEncryptedV3PrimaryOffline(
+    kind,
+    record,
+    parentId = '',
+    mode = 'update',
+    expectedUpdatedAt = '',
+  ) {
+    if (!v3PrimaryModeRef.current) return
+    if (!v3PracticeKeyRef.current) {
+      throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+    }
+
+    const item = await createEncryptedV3PrimaryOfflineItem(
+      kind,
+      record,
+      parentId,
+      cloudUser?.id || '',
+      v3PracticeKeyRef.current,
+      mode,
+      expectedUpdatedAt,
+    )
+
+    await enqueueV3MirrorOutbox(item)
+
+    const forbiddenValues = kind === 'patient'
+      ? [record.firstName, record.lastName, record.birthDate]
+      : kind === 'prescription'
+        ? [String(record.remedy || '').length >= 4 ? record.remedy : '']
+        : [record.text]
+
+    const audit = await inspectV3MirrorOutboxRaw(forbiddenValues)
+    if (!audit.safe) {
+      await removeV3MirrorOutboxItem(item.id)
+      await refreshV3MirrorOutboxCount()
+      throw new Error(
+        `Sicherheitsprüfung der V3-Offline-Outbox fehlgeschlagen: Klartextfund ${audit.leaks.join(', ')}`,
       )
     }
 
@@ -3413,6 +3463,8 @@ async function handleImportChangeZip(event) {
       setLibraryItems([])
       setNav('patients')
       setView('list')
+      await refreshV3MirrorOutboxCount()
+      if (navigator.onLine) await flushV3PrimaryOutbox()
       await loadListData()
       setSuccessMessage('🔓 Verschlüsselte Praxis geöffnet.')
     } catch (e) {
@@ -3453,6 +3505,8 @@ async function handleImportChangeZip(event) {
       setLibraryItems([])
       setNav('patients')
       setView('list')
+      await refreshV3MirrorOutboxCount()
+      if (navigator.onLine) await flushV3PrimaryOutbox()
       await loadListData()
       setSuccessMessage('🔓 Verschlüsselte Praxis mit Wiederherstellungsschlüssel geöffnet.')
     } catch (e) {
