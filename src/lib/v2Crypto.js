@@ -12,9 +12,15 @@ function ensureCrypto() {
 }
 
 function bytesToBase64(bytes) {
-  let binary = ''
-  bytes.forEach(byte => { binary += String.fromCharCode(byte) })
-  return globalThis.btoa(binary)
+  const CHUNK_SIZE = 0x8000
+  const chunks = []
+
+  for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
+    const chunk = bytes.subarray(offset, Math.min(offset + CHUNK_SIZE, bytes.length))
+    chunks.push(String.fromCharCode(...chunk))
+  }
+
+  return globalThis.btoa(chunks.join(''))
 }
 
 function base64ToBytes(base64) {
