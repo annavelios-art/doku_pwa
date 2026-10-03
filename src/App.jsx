@@ -47,12 +47,14 @@ import {
   getOutboxItems, markOutboxConflict, removeOutboxItem,
 } from './lib/v2OfflineDb'
 import {
-  createPracticeKeyBundle, decryptPracticeText, encryptPracticeText,
+  createPracticeKeyBundle, decryptPracticeBytes, decryptPracticeText,
+  encryptPracticeBytes, encryptPracticeText, sha256Hex,
   unlockPracticeKey, unlockPracticeKeyWithRecovery, V2_CRYPTO_PARAMETERS,
 } from './lib/v2Crypto'
 import {
-  getEncryptedMiniPracticeIds, loadEncryptedFantasyPatient, loadEncryptedMiniPractice,
-  saveEncryptedFantasyPatient, saveEncryptedMiniPractice,
+  getEncryptedLabFileId, getEncryptedMiniPracticeIds, loadEncryptedFantasyPatient,
+  loadEncryptedLabFile, loadEncryptedMiniPractice, saveEncryptedFantasyPatient,
+  saveEncryptedLabFile, saveEncryptedMiniPractice,
 } from './lib/supabaseCryptoLab'
 
 
@@ -133,6 +135,56 @@ function miniPrescriptionContext(prescriptionId, patientId) {
 
 function miniDocEntryContext(docEntryId, prescriptionId) {
   return `physiooptima:v2:doc-entry:${docEntryId}:prescription:${prescriptionId}`
+}
+
+function miniFileMetadataContext(fileId, docEntryId) {
+  return `physiooptima:v2:file-metadata:${fileId}:doc-entry:${docEntryId}`
+}
+
+function miniFileBytesContext(fileId, docEntryId) {
+  return `physiooptima:v2:file-bytes:${fileId}:doc-entry:${docEntryId}`
+}
+
+function createCryptoLabPdfBytes() {
+  const encoder = new TextEncoder()
+  const content = [
+    'BT',
+    '/F1 18 Tf',
+    '72 720 Td',
+    '(PhysioOptima Testbefund) Tj',
+    '0 -28 Td',
+    '(Erika Probe - 12.04.1965) Tj',
+    '0 -28 Td',
+    '(Schulter rechts) Tj',
+    'ET',
+  ].join('\n')
+
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${encoder.encode(content).byteLength} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+
+  let pdf = '%PDF-1.4\n'
+  const offsets = [0]
+
+  objects.forEach((objectText, index) => {
+    offsets[index + 1] = encoder.encode(pdf).byteLength
+    pdf += `${index + 1} 0 obj\n${objectText}\nendobj\n`
+  })
+
+  const xrefOffset = encoder.encode(pdf).byteLength
+  pdf += `xref\n0 ${objects.length + 1}\n`
+  pdf += '0000000000 65535 f \n'
+  for (let i = 1; i <= objects.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n`
+  pdf += `startxref\n${xrefOffset}\n%%EOF\n`
+
+  return encoder.encode(pdf)
 }
 
 const BACKUP_ARRAY_KEYS = [
@@ -549,6 +601,9 @@ export default function App() {
   const [cryptoCloudUpdatedAt, setCryptoCloudUpdatedAt] = useState('')
   const [cryptoMiniCipherSummary, setCryptoMiniCipherSummary] = useState([])
   const [cryptoMiniPractice, setCryptoMiniPractice] = useState(null)
+  const [cryptoLabFileCipherInfo, setCryptoLabFileCipherInfo] = useState(null)
+  const [cryptoLabFileResult, setCryptoLabFileResult] = useState(null)
+  const [cryptoLabFileUrl, setCryptoLabFileUrl] = useState('')
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -630,6 +685,12 @@ export default function App() {
     if (view === 'patientDetail') return [patientLabel(selectedPatient)].filter(Boolean)
     return ['Patientenliste']
   }, [nav, view, selectedPatient, selectedPrescription, docForm.entryDate, libraryCategory])
+
+  useEffect(() => {
+    return () => {
+      if (cryptoLabFileUrl) URL.revokeObjectURL(cryptoLabFileUrl)
+    }
+  }, [cryptoLabFileUrl])
 
   useEffect(() => {
     selectedPatientRef.current = selectedPatient
@@ -2317,6 +2378,174 @@ async function handleImportChangeZip(event) {
     }
   }
 
+  async function handleSaveEncryptedLabPdf() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (!cloudUser) throw new Error('Bitte zuerst bei Supabase anmelden.')
+      if (!navigator.onLine) throw new Error('Für diesen Test wird eine Internetverbindung benötigt.')
+      if (!cryptoPracticeKeyRef.current) {
+        throw new Error('Bitte den Test-Praxisschlüssel zuerst entsperren.')
+      }
+
+      const miniRows = await loadEncryptedMiniPractice(cloudUser.id)
+      if (!miniRows?.docEntry?.id) {
+        throw new Error('Bitte zuerst die verschlüsselte Mini-Praxis speichern.')
+      }
+
+      const fileId = await getEncryptedLabFileId(cloudUser.id)
+      const docEntryId = miniRows.docEntry.id
+      const pdfBytes = createCryptoLabPdfBytes()
+      const plainHash = await sha256Hex(pdfBytes)
+      const metadata = {
+        fileName: 'Testbefund_Erika_Probe.pdf',
+        mimeType: 'application/pdf',
+        originalSize: pdfBytes.byteLength,
+        sha256: plainHash,
+        title: 'Testbefund Erika Probe',
+      }
+
+      const [metadataEnvelope, storageEnvelope] = await Promise.all([
+        encryptPracticeText(
+          JSON.stringify(metadata),
+          cryptoPracticeKeyRef.current,
+          miniFileMetadataContext(fileId, docEntryId),
+        ),
+        encryptPracticeBytes(
+          pdfBytes,
+          cryptoPracticeKeyRef.current,
+          miniFileBytesContext(fileId, docEntryId),
+        ),
+      ])
+
+      const saved = await saveEncryptedLabFile(
+        {
+          id: fileId,
+          docEntryId,
+          metadata: metadataEnvelope,
+          storageEnvelope,
+        },
+        cloudUser.id,
+      )
+
+      const returnedCiphertext = JSON.stringify({
+        metadata: saved.metadata,
+        storageEnvelope,
+      })
+      const forbidden = [
+        'Erika',
+        'Probe',
+        'Schulter rechts',
+        'Testbefund_Erika_Probe.pdf',
+        'Testbefund Erika Probe',
+      ]
+      if (forbidden.some(value => returnedCiphertext.includes(value))) {
+        throw new Error('Sicherheitsprüfung fehlgeschlagen: Klartext wurde im verschlüsselten Dateipaket gefunden.')
+      }
+
+      if (cryptoLabFileUrl) {
+        URL.revokeObjectURL(cryptoLabFileUrl)
+        setCryptoLabFileUrl('')
+      }
+      setCryptoLabFileResult(null)
+      setCryptoLabFileCipherInfo({
+        id: saved.id,
+        storagePath: saved.storage_path,
+        encryptedSize: saved.encrypted_size,
+        metadataChars: JSON.stringify(saved.metadata).length,
+        storageEnvelopeChars: JSON.stringify(storageEnvelope).length,
+      })
+      setSuccessMessage(
+        'Test-PDF verschlüsselt gespeichert: Dateiname, Metadaten und PDF-Inhalt liegen nicht im Klartext bei Supabase.',
+      )
+    } catch (e) {
+      setError(`PDF-Verschlüsselungstest fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  async function handleLoadEncryptedLabPdf() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (!cloudUser) throw new Error('Bitte zuerst bei Supabase anmelden.')
+      if (!navigator.onLine) throw new Error('Für diesen Test wird eine Internetverbindung benötigt.')
+      if (!cryptoPracticeKeyRef.current) {
+        throw new Error('Bitte den Test-Praxisschlüssel zuerst entsperren.')
+      }
+
+      const [fileBundle, miniRows] = await Promise.all([
+        loadEncryptedLabFile(cloudUser.id),
+        loadEncryptedMiniPractice(cloudUser.id),
+      ])
+
+      if (!fileBundle) throw new Error('Noch kein verschlüsseltes Test-PDF im Storage gefunden.')
+      if (!miniRows?.docEntry?.id) throw new Error('Die zugehörige Test-Doku fehlt.')
+      if (fileBundle.row.doc_entry_id !== miniRows.docEntry.id) {
+        throw new Error('Technische Verknüpfung Doku → Datei stimmt nicht.')
+      }
+
+      const fileId = fileBundle.row.id
+      const docEntryId = fileBundle.row.doc_entry_id
+      const [metadataJson, pdfBytes] = await Promise.all([
+        decryptPracticeText(
+          fileBundle.row.metadata,
+          cryptoPracticeKeyRef.current,
+          miniFileMetadataContext(fileId, docEntryId),
+        ),
+        decryptPracticeBytes(
+          fileBundle.storageEnvelope,
+          cryptoPracticeKeyRef.current,
+          miniFileBytesContext(fileId, docEntryId),
+        ),
+      ])
+
+      const metadata = JSON.parse(metadataJson)
+      const actualHash = await sha256Hex(pdfBytes)
+
+      if (metadata.originalSize !== pdfBytes.byteLength) {
+        throw new Error('Dateigröße stimmt nach dem Entschlüsseln nicht überein.')
+      }
+      if (metadata.sha256 !== actualHash) {
+        throw new Error('Prüfsumme stimmt nicht: Datei wäre verändert oder beschädigt.')
+      }
+
+      const pdfHeader = new TextDecoder().decode(pdfBytes.slice(0, 8))
+      if (!pdfHeader.startsWith('%PDF-1.4')) {
+        throw new Error('Die wiederhergestellte Datei ist kein erwartetes Test-PDF.')
+      }
+
+      if (cryptoLabFileUrl) URL.revokeObjectURL(cryptoLabFileUrl)
+      const objectUrl = URL.createObjectURL(
+        new Blob([pdfBytes], { type: metadata.mimeType }),
+      )
+      setCryptoLabFileUrl(objectUrl)
+      setCryptoLabFileResult({
+        ...metadata,
+        actualHash,
+      })
+      setCryptoLabFileCipherInfo({
+        id: fileBundle.row.id,
+        storagePath: fileBundle.row.storage_path,
+        encryptedSize: fileBundle.row.encrypted_size,
+        metadataChars: JSON.stringify(fileBundle.row.metadata).length,
+        storageEnvelopeChars: JSON.stringify(fileBundle.storageEnvelope).length,
+      })
+      setSuccessMessage(
+        'Test-PDF aus dem privaten Storage geladen, lokal entschlüsselt und per SHA-256 bytegenau geprüft.',
+      )
+    } catch (e) {
+      setError(`PDF laden/entschlüsseln fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
   function handleLockCryptoLab() {
     cryptoPracticeKeyRef.current = null
     setCryptoUnlocked(false)
@@ -2324,6 +2553,9 @@ async function handleImportChangeZip(event) {
     setCryptoDecryptedText('')
     setCryptoCloudPatient(null)
     setCryptoMiniPractice(null)
+    setCryptoLabFileResult(null)
+    if (cryptoLabFileUrl) URL.revokeObjectURL(cryptoLabFileUrl)
+    setCryptoLabFileUrl('')
     setSuccessMessage('Test-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
   }
 
@@ -2345,6 +2577,10 @@ async function handleImportChangeZip(event) {
     setCryptoCloudUpdatedAt('')
     setCryptoMiniCipherSummary([])
     setCryptoMiniPractice(null)
+    setCryptoLabFileCipherInfo(null)
+    setCryptoLabFileResult(null)
+    if (cryptoLabFileUrl) URL.revokeObjectURL(cryptoLabFileUrl)
+    setCryptoLabFileUrl('')
     setError('')
     setSuccessMessage('Lokaler Verschlüsselungstest wurde zurückgesetzt.')
   }
@@ -3679,6 +3915,67 @@ function openStoredFile(file) {
                                   Doku: {formatDate(cryptoMiniPractice.docEntry.entryDate)} ·
                                   {' '}{cryptoMiniPractice.docEntry.text}
                                 </span>
+                              </div>
+                            )}
+
+                            <div className="sync-status">
+                              <strong>🌊 Mariannengraben: verschlüsselte Datei im Storage</strong>
+                              <span>
+                                Ein künstliches PDF mit „Erika Probe / Schulter rechts“ wird als echte PDF-Datei
+                                erzeugt. Dateiname, Metadaten und Inhalt werden vor dem Upload getrennt verschlüsselt.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleSaveEncryptedLabPdf}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Test-PDF verschlüsselt in Storage speichern
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLoadEncryptedLabPdf}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Test-PDF laden + lokal entschlüsseln
+                            </button>
+
+                            {cryptoLabFileCipherInfo && (
+                              <div className="sync-status">
+                                <strong>Was Supabase von der Datei sieht</strong>
+                                <span>
+                                  Pfad: {cryptoLabFileCipherInfo.storagePath}
+                                </span>
+                                <span>
+                                  Verschlüsseltes Storage-Paket: {cryptoLabFileCipherInfo.encryptedSize} Bytes ·
+                                  {' '}Metadaten-Chiffretext: {cryptoLabFileCipherInfo.metadataChars} Zeichen
+                                </span>
+                              </div>
+                            )}
+
+                            {cryptoLabFileResult && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Auf deinem Gerät wiederhergestellt</strong>
+                                <span>
+                                  {cryptoLabFileResult.fileName} ·
+                                  {' '}{cryptoLabFileResult.mimeType} ·
+                                  {' '}{cryptoLabFileResult.originalSize} Bytes
+                                </span>
+                                <span>SHA-256-Prüfung: bestanden</span>
+                                {cryptoLabFileUrl && (
+                                  <a
+                                    className="btn btn-ghost"
+                                    href={cryptoLabFileUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    Entschlüsseltes Test-PDF öffnen
+                                  </a>
+                                )}
                               </div>
                             )}
 
