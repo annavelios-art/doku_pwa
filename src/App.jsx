@@ -68,6 +68,9 @@ import {
 import {
   createV3Keyring, getV3EncryptedCounts, loadV3Keyring,
 } from './lib/v3EncryptedPractice'
+import {
+  buildV3EncryptedParallelCopy, verifyV3EncryptedParallelCopy,
+} from './lib/v3ParallelMigration'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -638,6 +641,9 @@ export default function App() {
   const [v3RecoveryDownloaded, setV3RecoveryDownloaded] = useState(false)
   const [v3Unlocked, setV3Unlocked] = useState(false)
   const [v3Counts, setV3Counts] = useState(null)
+  const [v3BridgeBusy, setV3BridgeBusy] = useState(false)
+  const [v3BridgeProgress, setV3BridgeProgress] = useState('')
+  const [v3BridgeVerification, setV3BridgeVerification] = useState(null)
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -3022,7 +3028,70 @@ async function handleImportChangeZip(event) {
   function handleLockV3PracticeKey() {
     v3PracticeKeyRef.current = null
     setV3Unlocked(false)
+    setV3BridgeVerification(null)
     setSuccessMessage('V3-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
+  }
+
+  async function handleBuildV3ParallelBridge() {
+    setError('')
+    setSuccessMessage('')
+    setV3BridgeVerification(null)
+
+    if (!cloudUser) {
+      setError('Bitte zuerst bei Supabase anmelden.')
+      return
+    }
+    if (!v3PracticeKeyRef.current || !v3Unlocked) {
+      setError('Bitte zuerst den V3-Praxisschlüssel entsperren.')
+      return
+    }
+    if (!navigator.onLine) {
+      setError('Für den Brückenbau wird eine Internetverbindung benötigt.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      'V3-Parallelbestand jetzt aufbauen?\n\n' +
+      'Die bisherigen Praxistabellen und Dateien bleiben vollständig bestehen. ' +
+      'Es werden ausschließlich zusätzliche verschlüsselte V3-Kopien erzeugt bzw. aktualisiert.\n\n' +
+      'Anschließend wird der komplette V3-Bestand wieder entschlüsselt und geprüft.'
+    )
+    if (!confirmed) return
+
+    setV3BridgeBusy(true)
+
+    try {
+      setV3BridgeProgress('Brückenbau startet …')
+      const buildResult = await buildV3EncryptedParallelCopy({
+        userId: cloudUser.id,
+        practiceKey: v3PracticeKeyRef.current,
+        onProgress: setV3BridgeProgress,
+      })
+
+      await refreshV3BridgeStatus()
+
+      setV3BridgeProgress('V3 geschrieben. Vollständige Gegenprüfung startet …')
+      const verification = await verifyV3EncryptedParallelCopy({
+        userId: cloudUser.id,
+        practiceKey: v3PracticeKeyRef.current,
+        onProgress: setV3BridgeProgress,
+      })
+
+      setV3BridgeVerification({
+        ...verification,
+        sourceCounts: buildResult.sourceCounts,
+      })
+      await refreshV3BridgeStatus()
+      setSuccessMessage(
+        'V3-Brückenbelag vollständig geprüft: Alle alten Praxisdaten bleiben bestehen; die parallelen V3-Daten lassen sich vollständig entschlüsseln.',
+      )
+    } catch (e) {
+      setError(
+        `V3-Brückenbau angehalten: ${e.message} Die alten Praxisdaten wurden nicht verändert. Der Vorgang kann erneut gestartet werden.`,
+      )
+    } finally {
+      setV3BridgeBusy(false)
+    }
   }
 
   function formatByteCount(bytes) {
@@ -4380,12 +4449,67 @@ function openStoredFile(file) {
                           <>
                             <div className="sync-status sync-status-active">
                               <strong>🔓 V3-Praxisschlüssel entsperrt</strong>
-                              <span>Nur im Arbeitsspeicher dieses Geräts. Noch wurden keine echten Patientendaten kopiert.</span>
+                              <span>
+                                Nur im Arbeitsspeicher dieses Geräts.
+                                {v3Counts?.patients
+                                  ? ' Der verschlüsselte Parallelbestand kann jetzt aktualisiert und geprüft werden.'
+                                  : ' Die alte Praxis ist bereit für die verschlüsselte Parallelkopie.'}
+                              </span>
                             </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-green"
+                              onClick={handleBuildV3ParallelBridge}
+                              disabled={v3BridgeBusy}
+                            >
+                              {v3BridgeBusy
+                                ? 'V3-Brücke wird gebaut …'
+                                : 'V3-Parallelbestand bauen / aktualisieren + vollständig prüfen'}
+                            </button>
+
+                            {v3BridgeProgress && (
+                              <div className="sync-status">
+                                <strong>Brückenbau – Status</strong>
+                                <span>{v3BridgeProgress}</span>
+                              </div>
+                            )}
+
+                            {v3BridgeVerification && (
+                              <div className="sync-status sync-status-active">
+                                <strong>✅ V3-Brückenbelag vollständig geprüft</strong>
+                                <span>
+                                  Patienten: {v3BridgeVerification.v3Counts.patients} ·
+                                  {' '}Verordnungen: {v3BridgeVerification.v3Counts.prescriptions} ·
+                                  {' '}Doku: {v3BridgeVerification.v3Counts.docEntries}
+                                </span>
+                                <span>
+                                  Bilder: {v3BridgeVerification.v3Counts.docEntryImages} ·
+                                  {' '}Befunde: {v3BridgeVerification.v3Counts.patientDocuments} ·
+                                  {' '}Bibliothek: {v3BridgeVerification.v3Counts.libraryItems}
+                                </span>
+                                <span>
+                                  Verschlüsselte Dateien entschlüsselt + SHA-256 geprüft:
+                                  {' '}{v3BridgeVerification.verifiedFiles} ·
+                                  {' '}{formatByteCount(v3BridgeVerification.verifiedBytes)}
+                                </span>
+                                {v3BridgeVerification.missingDeletedFiles > 0 && (
+                                  <span>
+                                    {v3BridgeVerification.missingDeletedFiles} bereits gelöschte Dateireferenz(en)
+                                    hatten erwartungsgemäß keine Quelldatei mehr.
+                                  </span>
+                                )}
+                                <span>
+                                  Alte Tabellen/Dateien: unverändert vorhanden.
+                                </span>
+                              </div>
+                            )}
+
                             <button
                               type="button"
                               className="btn btn-ghost"
                               onClick={handleLockV3PracticeKey}
+                              disabled={v3BridgeBusy}
                             >
                               V3-Praxisschlüssel sperren
                             </button>
