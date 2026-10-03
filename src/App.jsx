@@ -51,7 +51,8 @@ import {
   unlockPracticeKey, unlockPracticeKeyWithRecovery, V2_CRYPTO_PARAMETERS,
 } from './lib/v2Crypto'
 import {
-  loadEncryptedFantasyPatient, saveEncryptedFantasyPatient,
+  getEncryptedMiniPracticeIds, loadEncryptedFantasyPatient, loadEncryptedMiniPractice,
+  saveEncryptedFantasyPatient, saveEncryptedMiniPractice,
 } from './lib/supabaseCryptoLab'
 
 
@@ -108,6 +109,31 @@ const V2_CRYPTO_LAB_PATIENT = Object.freeze({
   birthDate: '1970-02-01',
   note: 'Schulter rechts',
 })
+const V2_CRYPTO_MINI_PATIENT = Object.freeze({
+  firstName: 'Erika',
+  lastName: 'Probe',
+  birthDate: '1965-04-12',
+})
+const V2_CRYPTO_MINI_PRESCRIPTION = Object.freeze({
+  issueDate: '2026-10-01',
+  remedy: 'MT',
+})
+const V2_CRYPTO_MINI_DOC_ENTRY = Object.freeze({
+  entryDate: '2026-10-03',
+  text: 'Schulter rechts: Elevation eingeschränkt. Behandlung gut vertragen.',
+})
+
+function miniPatientContext(patientId) {
+  return `physiooptima:v2:patient:${patientId}`
+}
+
+function miniPrescriptionContext(prescriptionId, patientId) {
+  return `physiooptima:v2:prescription:${prescriptionId}:patient:${patientId}`
+}
+
+function miniDocEntryContext(docEntryId, prescriptionId) {
+  return `physiooptima:v2:doc-entry:${docEntryId}:prescription:${prescriptionId}`
+}
 
 const BACKUP_ARRAY_KEYS = [
   'patients',
@@ -521,6 +547,8 @@ export default function App() {
   const [cryptoCloudCipherPreview, setCryptoCloudCipherPreview] = useState('')
   const [cryptoCloudPatient, setCryptoCloudPatient] = useState(null)
   const [cryptoCloudUpdatedAt, setCryptoCloudUpdatedAt] = useState('')
+  const [cryptoMiniCipherSummary, setCryptoMiniCipherSummary] = useState([])
+  const [cryptoMiniPractice, setCryptoMiniPractice] = useState(null)
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -2085,6 +2113,7 @@ async function handleImportChangeZip(event) {
       const decryptedJson = await decryptPracticeText(
         row.payload,
         cryptoPracticeKeyRef.current,
+        V2_CRYPTO_LAB_PATIENT_CONTEXT,
       )
       const patient = JSON.parse(decryptedJson)
 
@@ -2112,12 +2141,189 @@ async function handleImportChangeZip(event) {
     }
   }
 
+  async function handleSaveEncryptedMiniPractice() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (!cloudUser) throw new Error('Bitte zuerst bei Supabase anmelden.')
+      if (!navigator.onLine) throw new Error('Für diesen Test wird eine Internetverbindung benötigt.')
+      if (!cryptoPracticeKeyRef.current) {
+        throw new Error('Bitte den Test-Praxisschlüssel zuerst entsperren.')
+      }
+
+      const ids = await getEncryptedMiniPracticeIds(cloudUser.id)
+      const patientContext = miniPatientContext(ids.patientId)
+      const prescriptionContext = miniPrescriptionContext(ids.prescriptionId, ids.patientId)
+      const docContext = miniDocEntryContext(ids.docEntryId, ids.prescriptionId)
+
+      const [patientPayload, prescriptionPayload, docEntryPayload] = await Promise.all([
+        encryptPracticeText(
+          JSON.stringify(V2_CRYPTO_MINI_PATIENT),
+          cryptoPracticeKeyRef.current,
+          patientContext,
+        ),
+        encryptPracticeText(
+          JSON.stringify(V2_CRYPTO_MINI_PRESCRIPTION),
+          cryptoPracticeKeyRef.current,
+          prescriptionContext,
+        ),
+        encryptPracticeText(
+          JSON.stringify(V2_CRYPTO_MINI_DOC_ENTRY),
+          cryptoPracticeKeyRef.current,
+          docContext,
+        ),
+      ])
+
+      const saved = await saveEncryptedMiniPractice(
+        {
+          ...ids,
+          patientPayload,
+          prescriptionPayload,
+          docEntryPayload,
+        },
+        cloudUser.id,
+      )
+
+      const serverText = JSON.stringify([
+        saved.patient.payload,
+        saved.prescription.payload,
+        saved.docEntry.payload,
+      ])
+      const forbiddenPlaintext = [
+        ...Object.values(V2_CRYPTO_MINI_PATIENT),
+        ...Object.values(V2_CRYPTO_MINI_PRESCRIPTION),
+        ...Object.values(V2_CRYPTO_MINI_DOC_ENTRY),
+      ].map(String)
+
+      if (forbiddenPlaintext.some(value => serverText.includes(value))) {
+        throw new Error('Sicherheitsprüfung fehlgeschlagen: Klartext wurde in einem Server-Payload gefunden.')
+      }
+
+      setCryptoMiniPractice(null)
+      setCryptoMiniCipherSummary([
+        {
+          label: 'Patient',
+          id: saved.patient.id,
+          parent: '',
+          chars: JSON.stringify(saved.patient.payload).length,
+        },
+        {
+          label: 'Verordnung',
+          id: saved.prescription.id,
+          parent: saved.prescription.patient_id,
+          chars: JSON.stringify(saved.prescription.payload).length,
+        },
+        {
+          label: 'Doku',
+          id: saved.docEntry.id,
+          parent: saved.docEntry.prescription_id,
+          chars: JSON.stringify(saved.docEntry.payload).length,
+        },
+      ])
+      setSuccessMessage(
+        'Mini-Praxis gespeichert: Patient, Verordnung und Doku liegen als drei getrennte verschlüsselte Datensätze in Supabase.',
+      )
+    } catch (e) {
+      setError(`Mini-Praxis speichern fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  async function handleLoadEncryptedMiniPractice() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (!cloudUser) throw new Error('Bitte zuerst bei Supabase anmelden.')
+      if (!navigator.onLine) throw new Error('Für diesen Test wird eine Internetverbindung benötigt.')
+      if (!cryptoPracticeKeyRef.current) {
+        throw new Error('Bitte den Test-Praxisschlüssel zuerst entsperren.')
+      }
+
+      const rows = await loadEncryptedMiniPractice(cloudUser.id)
+      if (!rows) throw new Error('Noch keine verschlüsselte Mini-Praxis gefunden.')
+
+      if (rows.prescription.patient_id !== rows.patient.id) {
+        throw new Error('Technische Verknüpfung Patient → Verordnung stimmt nicht.')
+      }
+      if (rows.docEntry.prescription_id !== rows.prescription.id) {
+        throw new Error('Technische Verknüpfung Verordnung → Doku stimmt nicht.')
+      }
+
+      const [patientJson, prescriptionJson, docEntryJson] = await Promise.all([
+        decryptPracticeText(
+          rows.patient.payload,
+          cryptoPracticeKeyRef.current,
+          miniPatientContext(rows.patient.id),
+        ),
+        decryptPracticeText(
+          rows.prescription.payload,
+          cryptoPracticeKeyRef.current,
+          miniPrescriptionContext(rows.prescription.id, rows.patient.id),
+        ),
+        decryptPracticeText(
+          rows.docEntry.payload,
+          cryptoPracticeKeyRef.current,
+          miniDocEntryContext(rows.docEntry.id, rows.prescription.id),
+        ),
+      ])
+
+      const miniPractice = {
+        patient: JSON.parse(patientJson),
+        prescription: JSON.parse(prescriptionJson),
+        docEntry: JSON.parse(docEntryJson),
+      }
+
+      if (
+        JSON.stringify(miniPractice.patient) !== JSON.stringify(V2_CRYPTO_MINI_PATIENT) ||
+        JSON.stringify(miniPractice.prescription) !== JSON.stringify(V2_CRYPTO_MINI_PRESCRIPTION) ||
+        JSON.stringify(miniPractice.docEntry) !== JSON.stringify(V2_CRYPTO_MINI_DOC_ENTRY)
+      ) {
+        throw new Error('Entschlüsselte Mini-Praxis stimmt nicht mit den Testdaten überein.')
+      }
+
+      setCryptoMiniCipherSummary([
+        {
+          label: 'Patient',
+          id: rows.patient.id,
+          parent: '',
+          chars: JSON.stringify(rows.patient.payload).length,
+        },
+        {
+          label: 'Verordnung',
+          id: rows.prescription.id,
+          parent: rows.prescription.patient_id,
+          chars: JSON.stringify(rows.prescription.payload).length,
+        },
+        {
+          label: 'Doku',
+          id: rows.docEntry.id,
+          parent: rows.docEntry.prescription_id,
+          chars: JSON.stringify(rows.docEntry.payload).length,
+        },
+      ])
+      setCryptoMiniPractice(miniPractice)
+      setSuccessMessage(
+        'Mini-Praxis aus Supabase geladen: Drei Chiffretexte wurden erst auf diesem Gerät wieder zu Patient, Verordnung und Doku.',
+      )
+    } catch (e) {
+      setError(`Mini-Praxis laden fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
   function handleLockCryptoLab() {
     cryptoPracticeKeyRef.current = null
     setCryptoUnlocked(false)
     setCryptoCipherPreview('')
     setCryptoDecryptedText('')
     setCryptoCloudPatient(null)
+    setCryptoMiniPractice(null)
     setSuccessMessage('Test-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
   }
 
@@ -2137,6 +2343,8 @@ async function handleImportChangeZip(event) {
     setCryptoCloudCipherPreview('')
     setCryptoCloudPatient(null)
     setCryptoCloudUpdatedAt('')
+    setCryptoMiniCipherSummary([])
+    setCryptoMiniPractice(null)
     setError('')
     setSuccessMessage('Lokaler Verschlüsselungstest wurde zurückgesetzt.')
   }
@@ -3413,6 +3621,63 @@ function openStoredFile(file) {
                                   {cryptoCloudPatient.firstName} {cryptoCloudPatient.lastName} ·
                                   {' '}{formatDate(cryptoCloudPatient.birthDate)} ·
                                   {' '}{cryptoCloudPatient.note}
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="sync-status">
+                              <strong>⛏️ Mini-Praxis: drei getrennte Tresorfächer</strong>
+                              <span>
+                                Patient „Erika Probe“ → Verordnung „MT“ → Doku „Schulter rechts …“.
+                                Jeder Inhalt wird separat verschlüsselt; offen bleiben nur zufällige IDs und ihre Verknüpfungen.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleSaveEncryptedMiniPractice}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Mini-Praxis verschlüsselt speichern
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLoadEncryptedMiniPractice}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Mini-Praxis laden + lokal entschlüsseln
+                            </button>
+
+                            {cryptoMiniCipherSummary.length > 0 && (
+                              <div className="sync-status">
+                                <strong>Was Supabase technisch sehen darf</strong>
+                                {cryptoMiniCipherSummary.map(item => (
+                                  <span key={item.label}>
+                                    {item.label}: ID {item.id.slice(0, 8)}… ·
+                                    {' '}{item.chars} Zeichen Chiffretext
+                                    {item.parent ? ` · verknüpft mit ${item.parent.slice(0, 8)}…` : ''}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {cryptoMiniPractice && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Auf deinem Gerät wieder zusammengesetzt</strong>
+                                <span>
+                                  Patient: {cryptoMiniPractice.patient.firstName} {cryptoMiniPractice.patient.lastName} ·
+                                  {' '}{formatDate(cryptoMiniPractice.patient.birthDate)}
+                                </span>
+                                <span>
+                                  Verordnung: {formatDate(cryptoMiniPractice.prescription.issueDate)} ·
+                                  {' '}{cryptoMiniPractice.prescription.remedy}
+                                </span>
+                                <span>
+                                  Doku: {formatDate(cryptoMiniPractice.docEntry.entryDate)} ·
+                                  {' '}{cryptoMiniPractice.docEntry.text}
                                 </span>
                               </div>
                             )}
