@@ -247,3 +247,34 @@ export async function loadEncryptedLabFile(userId) {
   const storageEnvelope = JSON.parse(await blob.text())
   return { row, storageEnvelope }
 }
+
+
+export async function saveEncryptedMiniDocEntryPayload({
+  id,
+  prescriptionId,
+  payload,
+}, userId) {
+  if (!userId) throw new Error('Bitte zuerst bei Supabase anmelden.')
+  if (!id || !prescriptionId || !payload) {
+    throw new Error('Verschlüsselte Doku ist unvollständig.')
+  }
+
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('crypto_lab_doc_entries')
+    .upsert(
+      {
+        id,
+        created_by: userId,
+        prescription_id: prescriptionId,
+        payload,
+        updated_at: now,
+      },
+      { onConflict: 'id' },
+    )
+    .select('id, prescription_id, payload, created_at, updated_at')
+    .single()
+
+  if (error) throw error
+  return data
+}
