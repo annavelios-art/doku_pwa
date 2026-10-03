@@ -356,12 +356,17 @@ export async function createEncryptedSupabaseBackup(userId, passphrase, onProgre
     version: VERSION,
     exportedAt,
     sourceOwnerId: userId,
+    manifest: {
+      counts,
+      fileCount: files.length,
+      missingDeletedFiles,
+      totalPlainFileBytes: totalPlainBytes,
+    },
     tables,
     files,
   }
 
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload))
-  const payloadSha256 = await sha256Hex(payloadBytes)
 
   onProgress?.('Verschlüssele vollständiges Backup lokal im Browser …')
   const encrypted = await encryptBytesWithPassphrase(
@@ -373,12 +378,6 @@ export async function createEncryptedSupabaseBackup(userId, passphrase, onProgre
   const wrapper = {
     format: WRAPPER_FORMAT,
     version: VERSION,
-    createdAt: exportedAt,
-    counts,
-    fileCount: files.length,
-    missingDeletedFiles,
-    totalPlainFileBytes: totalPlainBytes,
-    payloadSha256,
     encryption: encrypted,
   }
 
@@ -416,19 +415,13 @@ export async function verifyEncryptedSupabaseBackup(file, passphrase, onProgress
     passphrase,
     BACKUP_CONTEXT,
   )
-  const payloadSha256 = await sha256Hex(payloadBytes)
-
-  if (payloadSha256 !== wrapper.payloadSha256) {
-    throw new Error('Backup-Prüfsumme stimmt nach dem Entschlüsseln nicht.')
-  }
-
   const payload = JSON.parse(new TextDecoder().decode(payloadBytes))
   if (payload.format !== PAYLOAD_FORMAT || payload.version !== VERSION) {
     throw new Error('Entschlüsselter Backup-Inhalt hat ein unbekanntes Format.')
   }
 
   const counts = countMap(payload.tables || {})
-  assertCounts(wrapper.counts, counts)
+  assertCounts(payload.manifest?.counts, counts)
   assertRelations(payload.tables || {})
 
   let verifiedFiles = 0
@@ -461,11 +454,14 @@ export async function verifyEncryptedSupabaseBackup(file, passphrase, onProgress
     verifiedBytes += bytes.byteLength
   }
 
-  if ((payload.files || []).length !== wrapper.fileCount) {
-    throw new Error('Anzahl der Dateieinträge stimmt nicht mit dem Backup-Kopf überein.')
+  if ((payload.files || []).length !== (payload.manifest?.fileCount ?? -1)) {
+    throw new Error('Anzahl der Dateieinträge stimmt nicht mit dem verschlüsselten Manifest überein.')
   }
-  if (missingDeletedFiles !== (wrapper.missingDeletedFiles || 0)) {
+  if (missingDeletedFiles !== (payload.manifest?.missingDeletedFiles || 0)) {
     throw new Error('Anzahl fehlender gelöschter Dateien stimmt nicht überein.')
+  }
+  if (verifiedBytes !== (payload.manifest?.totalPlainFileBytes || 0)) {
+    throw new Error('Gesamtgröße der gesicherten Dateien stimmt nicht überein.')
   }
 
   onProgress?.('Wiederherstellungstest bestanden.')
@@ -476,7 +472,7 @@ export async function verifyEncryptedSupabaseBackup(file, passphrase, onProgress
     verifiedFiles,
     missingDeletedFiles,
     verifiedBytes,
-    exportedAt: payload.exportedAt || wrapper.createdAt || '',
+    exportedAt: payload.exportedAt || '',
     sourceOwnerId: payload.sourceOwnerId || '',
   }
 }
