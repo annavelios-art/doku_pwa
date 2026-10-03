@@ -812,10 +812,15 @@ export default function App() {
     if (!cloudUser) return undefined
 
     refreshOutboxCount()
-    if (navigator.onLine) void flushOutbox()
+    refreshV3MirrorOutboxCount()
+    if (navigator.onLine) {
+      void flushOutbox()
+      void flushV3MirrorOutbox()
+    }
 
     const handleOnline = () => {
       void flushOutbox()
+      window.setTimeout(() => void flushV3MirrorOutbox(), 250)
     }
 
     window.addEventListener('online', handleOnline)
@@ -1500,6 +1505,104 @@ export default function App() {
       setOutboxCount(await getOutboxCount())
     } catch {
       setOutboxCount(0)
+    }
+  }
+
+  async function refreshV3MirrorOutboxCount() {
+    try {
+      setV3MirrorOutboxCount(await getV3MirrorOutboxCount())
+    } catch {
+      setV3MirrorOutboxCount(0)
+    }
+  }
+
+  async function queueEncryptedV3MirrorOffline(kind, record, parentId = '') {
+    if (!v3MirrorModeRef.current) return
+    if (!v3PracticeKeyRef.current) {
+      throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+    }
+
+    const item = await createEncryptedV3MirrorOfflineItem(
+      kind,
+      record,
+      parentId,
+      v3PracticeKeyRef.current,
+      cloudUser?.id || '',
+    )
+
+    await enqueueV3MirrorOutbox(item)
+
+    const forbiddenValues = kind === 'patient'
+      ? [record.firstName, record.lastName, record.birthDate]
+      : kind === 'prescription'
+        ? [record.issueDate, String(record.remedy || '').length >= 4 ? record.remedy : '']
+        : [record.entryDate, record.text]
+
+    const audit = await inspectV3MirrorOutboxRaw(forbiddenValues)
+    setV3MirrorOfflineAudit(audit)
+
+    if (!audit.safe) {
+      await removeV3MirrorOutboxItem(item.id)
+      await refreshV3MirrorOutboxCount()
+      throw new Error(
+        `Sicherheitsprüfung der V3-Spiegel-Outbox fehlgeschlagen: Klartextfund ${audit.leaks.join(', ')}`,
+      )
+    }
+
+    await refreshV3MirrorOutboxCount()
+  }
+
+  async function flushV3MirrorOutbox() {
+    if (
+      !cloudUser ||
+      !navigator.onLine ||
+      !v3PracticeKeyRef.current ||
+      v3MirrorFlushBusyRef.current
+    ) return
+
+    v3MirrorFlushBusyRef.current = true
+    let mirrored = 0
+
+    try {
+      const [mirrorItems, legacyItems] = await Promise.all([
+        getV3MirrorOutboxItems(),
+        getOutboxItems(),
+      ])
+      const legacyPendingIds = new Set(
+        legacyItems
+          .filter(item => !item.userId || item.userId === cloudUser.id)
+          .map(item => item.id),
+      )
+
+      for (const item of mirrorItems) {
+        if (item.userId && item.userId !== cloudUser.id) continue
+        if (legacyPendingIds.has(item.id)) continue
+
+        try {
+          await mirrorQueuedV3OfflineItem(
+            item,
+            cloudUser.id,
+            v3PracticeKeyRef.current,
+          )
+          await removeV3MirrorOutboxItem(item.id)
+          mirrored += 1
+        } catch (e) {
+          setError(
+            `V3-Spiegel-Outbox wartet weiter: ${e.message}`,
+          )
+          break
+        }
+      }
+
+      await refreshV3MirrorOutboxCount()
+
+      if (mirrored > 0) {
+        setV3MirrorLastMessage(
+          `🪞 ${mirrored} Offline-Änderung${mirrored === 1 ? '' : 'en'} nach V3 gespiegelt und geprüft.`,
+        )
+      }
+    } finally {
+      v3MirrorFlushBusyRef.current = false
     }
   }
 
