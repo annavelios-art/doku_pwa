@@ -1595,6 +1595,7 @@ export default function App() {
       }
 
       await refreshV3MirrorOutboxCount()
+      setV3MirrorOfflineAudit(await inspectV3MirrorOutboxRaw([]))
 
       if (mirrored > 0) {
         setV3MirrorLastMessage(
@@ -4663,11 +4664,27 @@ function openStoredFile(file) {
               <div className="sync-status sync-status-active">
                 <strong>🪞 V3-Schreibspiegel aktiv</strong>
                 <span>
-                  Speichern schreibt zuerst in die bisherige Praxis und spiegelt den bestätigten Stand danach
-                  lokal verschlüsselt nach V3. Der Spiegel wird sofort wieder entschlüsselt und geprüft.
+                  Online: bisherige Praxis speichern → lokal verschlüsseln → V3 schreiben → sofort gegenprüfen.
                 </span>
+                <span>
+                  Offline: Patient, Verordnung und Doku-Text landen zusätzlich als Chiffretext in einer eigenen
+                  V3-Spiegel-Outbox. Doku-Bilder, Befunde und Bibliotheksdateien brauchen weiterhin Internet.
+                </span>
+                <span>
+                  Warteschlangen: bisherige Outbox {outboxCount} · verschlüsselte V3-Spiegel-Outbox {v3MirrorOutboxCount}
+                </span>
+                {v3MirrorOfflineAudit && (
+                  <span>
+                    Letzte Rohdatenprüfung der V3-Spiegel-Outbox:
+                    {' '}{v3MirrorOfflineAudit.leaks.length} Klartextfundstelle(n)
+                    {v3MirrorOfflineAudit.safe ? ' – sauber' : ''}
+                  </span>
+                )}
                 {v3MirrorLastMessage && <span>{v3MirrorLastMessage}</span>}
-                <span>Offline-Speichern ist in dieser Teststufe absichtlich gesperrt.</span>
+                <span>
+                  Brückentest-Hinweis: Die bisherige Offline-Arbeitskopie/alte Outbox existiert noch parallel.
+                  Vollständig verschlüsselter Offline-Betrieb wird erst beim späteren V3-Hauptbetrieb aktiviert.
+                </span>
                 <button
                   type="button"
                   className="btn btn-ghost"
