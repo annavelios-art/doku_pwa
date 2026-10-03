@@ -465,3 +465,102 @@ export async function mirrorV3LibraryItemById(itemId, userId, key) {
     key,
   })
 }
+
+
+function offlineQueueContext(kind, entityId, parentId = '') {
+  return `physiooptima:v3:mirror-outbox:${kind}:${entityId}:parent:${parentId || 'none'}:v1`
+}
+
+function normalizeOfflineRecord(kind, record, parentId = '') {
+  if (kind === 'patient') {
+    return {
+      firstName: record.firstName || '',
+      lastName: record.lastName || '',
+      birthDate: record.birthDate || '',
+    }
+  }
+
+  if (kind === 'prescription') {
+    return {
+      prescriptionDate: record.issueDate || '',
+      remedy: record.remedy || '',
+      patientId: parentId || record.patientId || '',
+    }
+  }
+
+  if (kind === 'docEntry') {
+    return {
+      entryDate: record.entryDate || '',
+      text: record.text || '',
+      prescriptionId: parentId || record.prescriptionId || '',
+    }
+  }
+
+  throw new Error(`Unbekannter V3-Offlinemirror-Typ: ${kind}`)
+}
+
+export async function createEncryptedV3MirrorOfflineItem(
+  kind,
+  record,
+  parentId,
+  key,
+  userId,
+) {
+  if (!record?.id) throw new Error('V3-Offlinemirror: Datensatz-ID fehlt.')
+  if (!key) throw new Error('V3-Offlinemirror: Praxisschlüssel fehlt.')
+
+  const plain = normalizeOfflineRecord(kind, record, parentId)
+  const aad = offlineQueueContext(kind, record.id, parentId)
+  const encryptedPayload = await encryptPracticeText(
+    JSON.stringify(plain),
+    key,
+    aad,
+  )
+
+  return {
+    id: `${kind}:${record.id}`,
+    kind,
+    entityId: record.id,
+    parentId: parentId || '',
+    userId: userId || '',
+    createdAt: record.createdAt || '',
+    updatedAt: record.updatedAt || '',
+    deletedAt: record.deletedAt || '',
+    encryptedPayload,
+  }
+}
+
+export async function decryptEncryptedV3MirrorOfflineItem(item, key) {
+  if (!item?.encryptedPayload) {
+    throw new Error('V3-Offlinemirror: verschlüsselter Inhalt fehlt.')
+  }
+
+  const aad = offlineQueueContext(item.kind, item.entityId, item.parentId)
+  const text = await decryptPracticeText(item.encryptedPayload, key, aad)
+  return JSON.parse(text)
+}
+
+export async function mirrorQueuedV3OfflineItem(item, userId, key) {
+  // Der verschlüsselte Queue-Inhalt wird absichtlich zuerst entschlüsselt,
+  // damit ein beschädigter oder vertauschter Queue-Eintrag nicht stillschweigend
+  // entfernt wird. Der eigentliche Spiegel liest danach den bestätigten Stand
+  // aus der bisherigen Supabase-Struktur.
+  await decryptEncryptedV3MirrorOfflineItem(item, key)
+
+  if (item.kind === 'patient') {
+    await mirrorV3PatientById(item.entityId, userId, key)
+    return
+  }
+
+  if (item.kind === 'prescription') {
+    await mirrorV3PrescriptionById(item.entityId, userId, key)
+    return
+  }
+
+  if (item.kind === 'docEntry') {
+    await mirrorV3DocEntryById(item.entityId, userId, key)
+    return
+  }
+
+  throw new Error(`Unbekannter V3-Offlinemirror-Typ: ${item.kind}`)
+}
