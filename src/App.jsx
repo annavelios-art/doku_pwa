@@ -3258,15 +3258,15 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('V3-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
   }
 
-  function ensureV3MirrorWriteReady() {
+  function ensureV3MirrorWriteReady({ allowOffline = false } = {}) {
     if (!v3MirrorModeRef.current) return
-    if (!navigator.onLine) {
-      throw new Error(
-        'V3-Schreibspiegel ist aktiv: Offline-Speichern ist in dieser Teststufe absichtlich gesperrt.',
-      )
-    }
     if (!v3PracticeKeyRef.current) {
       throw new Error('V3-Schreibspiegel ist aktiv, aber der Praxisschlüssel ist nicht entsperrt.')
+    }
+    if (!allowOffline && !navigator.onLine) {
+      throw new Error(
+        'Diese Aktion braucht im V3-Schreibspiegel weiterhin Internet. Offline unterstützt sind Patient, Verordnung und Doku-Text.',
+      )
     }
   }
 
@@ -3287,7 +3287,7 @@ async function handleImportChangeZip(event) {
     }
   }
 
-  function handleStartV3MirrorMode() {
+  async function handleStartV3MirrorMode() {
     setError('')
     setSuccessMessage('')
 
@@ -3300,13 +3300,7 @@ async function handleImportChangeZip(event) {
       return
     }
     if (!navigator.onLine) {
-      setError('Der erste Schreibspiegel-Test läuft absichtlich nur mit Internetverbindung.')
-      return
-    }
-    if (outboxCount > 0) {
-      setError(
-        `Bitte zuerst die ${outboxCount} wartenden Offline-Änderung(en) synchronisieren.`,
-      )
+      setError('Bitte den Schreibspiegel online starten. Danach darfst du für Patient, Verordnung und Doku-Text offline gehen.')
       return
     }
 
@@ -3315,8 +3309,11 @@ async function handleImportChangeZip(event) {
     setV3MirrorLastMessage('Schreibspiegel bereit – noch wurde nichts verändert.')
     setNav('patients')
     setView('list')
+    await refreshV3MirrorOutboxCount()
+    await flushOutbox()
+    await flushV3MirrorOutbox()
     setSuccessMessage(
-      '🪞 V3-Schreibspiegel aktiv. Neue Speicherungen werden zuerst normal und anschließend verschlüsselt nach V3 gespiegelt und gegengeprüft.',
+      '🪞 V3-Schreibspiegel aktiv. Online wird sofort gespiegelt; offline werden Patient, Verordnung und Doku-Text zusätzlich verschlüsselt in der V3-Outbox vorgemerkt.',
     )
   }
 
