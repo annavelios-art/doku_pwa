@@ -229,7 +229,7 @@ function centralZipHeader(entry) {
   return bytes
 }
 
-class StoredZipBuilder {
+export class StoredZipBuilder {
   constructor() {
     this.parts = []
     this.entries = []
@@ -302,7 +302,7 @@ async function readUint32At(blob, offset) {
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true)
 }
 
-async function indexStoredZip(file) {
+export async function indexStoredZip(file) {
   const entries = new Map()
   let offset = 0
 
@@ -348,7 +348,7 @@ async function indexStoredZip(file) {
   return entries
 }
 
-async function readIndexedEntry(file, entries, name) {
+export async function readIndexedEntry(file, entries, name) {
   const entry = entries.get(name)
   if (!entry) throw new Error(`Backup-ZIP enthält ${name} nicht.`)
   return readSliceBytes(file, entry.start, entry.size)
