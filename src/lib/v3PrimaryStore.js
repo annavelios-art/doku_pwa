@@ -741,3 +741,64 @@ export async function saveV3LibraryItem(form, category, userId, key) {
     deletedAt: data.deleted_at || '',
   }
 }
+
+
+export async function softDeleteV3Patient(patientId, expectedUpdatedAt, key) {
+  const current = await getRow(
+    'v3_patients',
+    'id,payload,created_at,updated_at,deleted_at',
+    patientId,
+  )
+  if (!current) throw new Error('V3-Patient wurde nicht gefunden.')
+
+  if (expectedUpdatedAt && current.updated_at !== expectedUpdatedAt) {
+    return { patient: null, conflict: await conflictPatient(current, key) }
+  }
+
+  const now = new Date().toISOString()
+  let query = supabase
+    .from('v3_patients')
+    .update({ deleted_at: now, updated_at: now })
+    .eq('id', patientId)
+
+  if (expectedUpdatedAt) query = query.eq('updated_at', expectedUpdatedAt)
+
+  const { data, error } = await query
+    .select('id,payload,created_at,updated_at,deleted_at')
+    .maybeSingle()
+
+  if (error) throw error
+  if (!data) {
+    const latest = await getRow(
+      'v3_patients',
+      'id,payload,created_at,updated_at,deleted_at',
+      patientId,
+    )
+    return { patient: null, conflict: await conflictPatient(latest, key) }
+  }
+
+  const plain = await decryptJson(data.payload, key, patientAad(data))
+  return { patient: patientFromPlain(data, plain), conflict: null }
+}
+
+export async function restoreV3Patient(patientId, key) {
+  const current = await getRow(
+    'v3_patients',
+    'id,payload,created_at,updated_at,deleted_at',
+    patientId,
+  )
+  if (!current) throw new Error('V3-Patient wurde nicht gefunden.')
+
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('v3_patients')
+    .update({ deleted_at: null, updated_at: now })
+    .eq('id', patientId)
+    .select('id,payload,created_at,updated_at,deleted_at')
+    .single()
+
+  if (error) throw error
+
+  const plain = await decryptJson(data.payload, key, patientAad(data))
+  return patientFromPlain(data, plain)
+}
