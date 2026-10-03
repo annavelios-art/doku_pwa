@@ -3731,6 +3731,7 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('')
 
     try {
+      ensureV3MirrorWriteReady()
       const { conflict } = await softDeletePatientInSupabase(selectedPatient.id, selectedPatient.updatedAt || '')
       if (conflict) {
         setPatientConflict(conflict)
@@ -3745,7 +3746,18 @@ async function handleImportChangeZip(event) {
       setDocEntryImageCounts({})
       setNav('patients')
       setView('list')
-      setSuccessMessage(`${expectedName} wurde in den Papierkorb verschoben. Alle zugehörigen Daten bleiben erhalten.`)
+
+      const mirrorOk = await runV3Mirror(
+        'Papierkorb',
+        () => mirrorV3PatientById(selectedPatient.id, cloudUser.id, v3PracticeKeyRef.current),
+      )
+      setSuccessMessage(
+        v3MirrorModeRef.current
+          ? (mirrorOk
+              ? `${expectedName} wurde verschoben – 🪞 Löschstatus im V3-Spiegel geprüft.`
+              : `${expectedName} wurde verschoben. Der V3-Spiegel braucht eine erneute Spiegelung.`)
+          : `${expectedName} wurde in den Papierkorb verschoben. Alle zugehörigen Daten bleiben erhalten.`,
+      )
     } catch (e) {
       setError(e.message)
     } finally {
@@ -3764,9 +3776,21 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('')
 
     try {
+      ensureV3MirrorWriteReady()
       await restorePatientInSupabase(patient.id)
       await loadListData()
-      setSuccessMessage(`${patientLabel(patient)} wurde wiederhergestellt.`)
+
+      const mirrorOk = await runV3Mirror(
+        'Wiederherstellen',
+        () => mirrorV3PatientById(patient.id, cloudUser.id, v3PracticeKeyRef.current),
+      )
+      setSuccessMessage(
+        v3MirrorModeRef.current
+          ? (mirrorOk
+              ? `${patientLabel(patient)} wurde wiederhergestellt – 🪞 V3-Status geprüft.`
+              : `${patientLabel(patient)} wurde wiederhergestellt. Der V3-Spiegel braucht eine erneute Spiegelung.`)
+          : `${patientLabel(patient)} wurde wiederhergestellt.`,
+      )
     } catch (e) {
       setError(e.message)
     } finally {
@@ -4115,6 +4139,7 @@ async function handleImportChangeZip(event) {
       if (!libraryForm.title.trim()) throw new Error('Bitte eine kurze Überschrift eintragen.')
       if (!libraryForm.file) throw new Error('Bitte eine Datei auswählen.')
       if (!cloudUser) throw new Error('Bitte erneut anmelden.')
+      ensureV3MirrorWriteReady()
 
       const saved = await saveLibraryItemToSupabase(
         {
@@ -4136,7 +4161,18 @@ async function handleImportChangeZip(event) {
 
       setLibraryForm({ ...EMPTY_LIBRARY_FORM, category: libraryCategory })
       setView('libraryList')
-      setSuccessMessage('Bibliotheksdatei gespeichert und synchronisiert.')
+
+      const mirrorOk = await runV3Mirror(
+        'Bibliothek',
+        () => mirrorV3LibraryItemById(saved.id, cloudUser.id, v3PracticeKeyRef.current),
+      )
+      setSuccessMessage(
+        v3MirrorModeRef.current
+          ? (mirrorOk
+              ? 'Bibliotheksdatei gespeichert – 🪞 verschlüsselter V3-Spiegel samt Datei geprüft.'
+              : 'Bibliotheksdatei gespeichert. Der V3-Spiegel braucht eine erneute Spiegelung.')
+          : 'Bibliotheksdatei gespeichert und synchronisiert.',
+      )
     } catch (e) {
       setError(e.message)
     } finally {
@@ -4160,6 +4196,7 @@ async function handleImportChangeZip(event) {
       if (patientDocumentConflict) {
         throw new Error('Dieses Dokument wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
       }
+      ensureV3MirrorWriteReady()
 
       const { document: saved, conflict } = await savePatientDocumentToSupabase(
         {
@@ -4184,7 +4221,18 @@ async function handleImportChangeZip(event) {
       setPatientDocumentBase(saved)
       setPatientDocumentForm(saved)
       setView('patientDetail')
-      setSuccessMessage('Dokument/Befund gespeichert und synchronisiert.')
+
+      const mirrorOk = await runV3Mirror(
+        'Dokument/Befund',
+        () => mirrorV3PatientDocumentById(saved.id, cloudUser.id, v3PracticeKeyRef.current),
+      )
+      setSuccessMessage(
+        v3MirrorModeRef.current
+          ? (mirrorOk
+              ? 'Dokument/Befund gespeichert – 🪞 verschlüsselter V3-Spiegel samt Datei geprüft.'
+              : 'Dokument/Befund gespeichert. Der V3-Spiegel braucht eine erneute Spiegelung.')
+          : 'Dokument/Befund gespeichert und synchronisiert.',
+      )
     } catch (e) {
       setError(e.message)
     } finally {
