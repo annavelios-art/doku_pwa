@@ -125,32 +125,6 @@ export async function listV3DeletedPatients(practiceKey) {
   }))
 }
 
-export async function listV3DeletedPatients(practiceKey) {
-  const { data, error } = await supabase
-    .from('v3_patients')
-    .select('id,payload,created_at,updated_at,deleted_at')
-    .not('deleted_at', 'is', null)
-
-  if (error) throw error
-
-  const items = await Promise.all((data || []).map(async row => {
-    const plain = await decryptJson(row.payload, practiceKey, patientAad(row))
-    return {
-      id: row.id,
-      firstName: plain.firstName || '',
-      lastName: plain.lastName || '',
-      birthDate: plain.birthDate || '',
-      createdAt: row.created_at || '',
-      updatedAt: row.updated_at || '',
-      deletedAt: row.deleted_at || '',
-    }
-  }))
-
-  return items.sort((a, b) =>
-    (b.deletedAt || '').localeCompare(a.deletedAt || '')
-  )
-}
-
 export async function getV3Patient(patientId, practiceKey) {
   const { data, error } = await supabase
     .from('v3_patients')
