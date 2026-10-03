@@ -78,9 +78,14 @@ import {
   loadV3DocEntryImages, loadV3LibraryItemFile, loadV3PatientDocumentFile,
 } from './lib/v3ReadOnly'
 import {
+  createEncryptedV3MirrorOfflineItem, mirrorQueuedV3OfflineItem,
   mirrorV3DocEntryById, mirrorV3LibraryItemById, mirrorV3PatientById,
   mirrorV3PatientDocumentById, mirrorV3PrescriptionById,
 } from './lib/v3WriteMirror'
+import {
+  enqueueV3MirrorOutbox, getV3MirrorOutboxCount, getV3MirrorOutboxItems,
+  inspectV3MirrorOutboxRaw, removeV3MirrorOutboxItem,
+} from './lib/v3MirrorOfflineDb'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -657,6 +662,8 @@ export default function App() {
   const [v3ReadMode, setV3ReadMode] = useState(false)
   const [v3MirrorMode, setV3MirrorMode] = useState(false)
   const [v3MirrorLastMessage, setV3MirrorLastMessage] = useState('')
+  const [v3MirrorOutboxCount, setV3MirrorOutboxCount] = useState(0)
+  const [v3MirrorOfflineAudit, setV3MirrorOfflineAudit] = useState(null)
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -690,6 +697,7 @@ export default function App() {
   const [autoSyncMessage, setAutoSyncMessage] = useState('Automatische Synchronisation ist ausgeschaltet.')
   const autoSyncBusyRef = useRef(false)
   const outboxFlushBusyRef = useRef(false)
+  const v3MirrorFlushBusyRef = useRef(false)
   const autoSyncTimerRef = useRef(null)
   const lastCloudTimestampRef = useRef('')
   const lastSyncedLocalTimestampRef = useRef('')
