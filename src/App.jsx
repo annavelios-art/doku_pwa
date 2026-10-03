@@ -5771,13 +5771,32 @@ function openStoredFile(file) {
                           entry={entry}
                           imageCount={docEntryImageCounts[entry.id] || 0}
                           onOpen={async value => {
-                            setDocForm(value)
-                            setDocBaseEntry(value)
-                            setDocConflict(null)
-                            const images = await loadDocEntryImagesFromSupabase(value.id)
-                            setDocImages(images)
-                            setDocImageBaseIds(images.map(image => image.id))
-                            setView('docEdit')
+                            try {
+                              setDocForm(value)
+                              setDocBaseEntry(value)
+                              setDocConflict(null)
+
+                              if (v3ReadModeRef.current) {
+                                if (!v3PracticeKeyRef.current) {
+                                  throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+                                }
+                                const images = await loadV3DocEntryImages(
+                                  value.id,
+                                  v3PracticeKeyRef.current,
+                                )
+                                setDocImages(images)
+                                setDocImageBaseIds([])
+                                setView('v3DocRead')
+                                return
+                              }
+
+                              const images = await loadDocEntryImagesFromSupabase(value.id)
+                              setDocImages(images)
+                              setDocImageBaseIds(images.map(image => image.id))
+                              setView('docEdit')
+                            } catch (e) {
+                              setError(`Doku konnte nicht geöffnet werden: ${e.message}`)
+                            }
                           }}
                         />
                       ))
@@ -5787,6 +5806,46 @@ function openStoredFile(file) {
 
                 <article className="surface-card card-doc-preview">
                   <p className="pre">{docEntries[0]?.text || 'Doku-Eintrag auswählen oder neu erstellen.'}</p>
+                </article>
+              </section>
+            )}
+
+            {view === 'v3DocRead' && v3ReadMode && selectedPrescription && (
+              <section className="stack">
+                <button
+                  type="button"
+                  className="btn btn-ghost-inline"
+                  onClick={() => setView('prescriptionDetail')}
+                >
+                  <ArrowLeft size={16} />
+                  Zurück zur Verordnung
+                </button>
+
+                <article className="surface-card stack">
+                  <div>
+                    <p className="muted">{formatDate(docForm.entryDate)}</p>
+                    <h2 className="section-title">Dokumentation – nur lesen</h2>
+                  </div>
+
+                  <p className="pre">{docForm.text || 'Ohne Text'}</p>
+
+                  {docImages.length > 0 && (
+                    <div className="stack">
+                      <h3 className="section-subtitle">Bilder</h3>
+                      {docImages.map(image => (
+                        <div key={image.id} className="sync-status">
+                          <strong>{image.fileName || 'Bild'}</strong>
+                          {image.dataUrl && (
+                            <img
+                              src={image.dataUrl}
+                              alt={image.fileName || 'Doku-Bild'}
+                              style={{ width: '100%', height: 'auto', borderRadius: 12 }}
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </article>
               </section>
             )}
