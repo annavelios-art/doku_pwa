@@ -164,3 +164,86 @@ export async function loadEncryptedMiniPractice(userId) {
     docEntry: docEntryResult.data,
   }
 }
+
+
+const CRYPTO_LAB_BUCKET = 'doku-vault'
+
+export async function getEncryptedLabFileId(userId) {
+  if (!userId) throw new Error('Bitte zuerst bei Supabase anmelden.')
+
+  const { data, error } = await supabase
+    .from('crypto_lab_files')
+    .select('id')
+    .eq('created_by', userId)
+    .maybeSingle()
+
+  if (error) throw error
+  return data?.id || crypto.randomUUID()
+}
+
+export async function saveEncryptedLabFile({
+  id,
+  docEntryId,
+  metadata,
+  storageEnvelope,
+}, userId) {
+  if (!userId) throw new Error('Bitte zuerst bei Supabase anmelden.')
+  if (!id || !docEntryId) throw new Error('Technische Datei-Verknüpfung fehlt.')
+
+  const storagePath = `${userId}/v2-crypto-lab/files/${id}.enc`
+  const storageText = JSON.stringify(storageEnvelope)
+  const storageBytes = new TextEncoder().encode(storageText)
+  const storageBlob = new Blob([storageBytes], { type: 'application/octet-stream' })
+
+  const { error: uploadError } = await supabase.storage
+    .from(CRYPTO_LAB_BUCKET)
+    .upload(storagePath, storageBlob, {
+      contentType: 'application/octet-stream',
+      upsert: true,
+    })
+
+  if (uploadError) throw uploadError
+
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('crypto_lab_files')
+    .upsert(
+      {
+        id,
+        created_by: userId,
+        doc_entry_id: docEntryId,
+        storage_path: storagePath,
+        metadata,
+        encrypted_size: storageBytes.byteLength,
+        updated_at: now,
+      },
+      { onConflict: 'id' },
+    )
+    .select('id, doc_entry_id, storage_path, metadata, encrypted_size, created_at, updated_at')
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function loadEncryptedLabFile(userId) {
+  if (!userId) throw new Error('Bitte zuerst bei Supabase anmelden.')
+
+  const { data: row, error: rowError } = await supabase
+    .from('crypto_lab_files')
+    .select('id, doc_entry_id, storage_path, metadata, encrypted_size, created_at, updated_at')
+    .eq('created_by', userId)
+    .maybeSingle()
+
+  if (rowError) throw rowError
+  if (!row) return null
+
+  const { data: blob, error: downloadError } = await supabase.storage
+    .from(CRYPTO_LAB_BUCKET)
+    .download(row.storage_path)
+
+  if (downloadError) throw downloadError
+
+  const storageEnvelope = JSON.parse(await blob.text())
+  return { row, storageEnvelope }
+}
