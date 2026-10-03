@@ -5355,7 +5355,7 @@ function openStoredFile(file) {
                     <p className="muted">PDF, JPG oder PNG mit kurzer Überschrift speichern.</p>
                   </div>
 
-                  {isOwner && (
+                  {isOwner && !v3ReadMode && (
                     <button
                       className="btn btn-green"
                       onClick={() => {
@@ -5388,7 +5388,9 @@ function openStoredFile(file) {
   			tone="library"
   			onOpen={async () => {
           try {
-            const loaded = await loadLibraryItemFile(item)
+            const loaded = v3ReadModeRef.current
+              ? await loadV3LibraryItemFile(item, v3PracticeKeyRef.current)
+              : await loadLibraryItemFile(item)
             openStoredFile(loaded.file)
           } catch (e) {
             setError(`Datei konnte nicht geladen werden: ${e.message}`)
