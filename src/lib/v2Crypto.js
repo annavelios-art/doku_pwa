@@ -211,6 +211,14 @@ export async function createPracticeKeyBundle(passphrase) {
   }
 }
 
+export async function createProductionPracticeKeyBundle(passphrase) {
+  if (String(passphrase || '').length < 16) {
+    throw new Error('Die echte Verschlüsselungs-Passphrase muss mindestens 16 Zeichen lang sein.')
+  }
+
+  return createPracticeKeyBundle(passphrase)
+}
+
 export async function unlockPracticeKey(passphrase, passwordEnvelope) {
   if (!passphrase) throw new Error('Bitte die Verschlüsselungs-Passphrase eingeben.')
 
