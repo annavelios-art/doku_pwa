@@ -259,6 +259,84 @@ export async function decryptPracticeText(envelope, practiceKey, expectedContext
 }
 
 
+export async function createBackupPassphraseKey(passphrase) {
+  if (String(passphrase || '').length < 16) {
+    throw new Error('Das Backup-Passwort muss mindestens 16 Zeichen lang sein.')
+  }
+
+  const salt = randomBytes(16)
+  const key = await derivePasswordKey(passphrase, salt)
+
+  return {
+    key,
+    kdf: {
+      name: 'PBKDF2-SHA256',
+      iterations: PBKDF2_ITERATIONS,
+      salt: bytesToBase64(salt),
+    },
+  }
+}
+
+export async function unlockBackupPassphraseKey(passphrase, kdf) {
+  if (!passphrase) throw new Error('Bitte das Backup-Passwort eingeben.')
+  if (!kdf?.salt || kdf.name !== 'PBKDF2-SHA256') {
+    throw new Error('Das Backup verwendet unbekannte Schlüsselparameter.')
+  }
+
+  return derivePasswordKey(
+    passphrase,
+    base64ToBytes(kdf.salt),
+    kdf.iterations || PBKDF2_ITERATIONS,
+  )
+}
+
+export async function encryptBackupBytesRaw(bytes, key, context) {
+  if (!key) throw new Error('Backup-Schlüssel fehlt.')
+  if (!context) throw new Error('Backup-Kontext fehlt.')
+
+  const plainBytes = bytes instanceof Uint8Array
+    ? bytes
+    : new Uint8Array(bytes)
+  const iv = randomBytes(12)
+  const encrypted = await globalThis.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv,
+      additionalData: encoder.encode(context),
+    },
+    key,
+    plainBytes,
+  )
+
+  return {
+    iv: bytesToBase64(iv),
+    data: new Uint8Array(encrypted),
+  }
+}
+
+export async function decryptBackupBytesRaw(bytes, key, ivBase64, context) {
+  if (!key) throw new Error('Backup-Schlüssel fehlt.')
+  if (!ivBase64 || !context) throw new Error('Backup-Verschlüsselungsdaten fehlen.')
+
+  try {
+    const encryptedBytes = bytes instanceof Uint8Array
+      ? bytes
+      : new Uint8Array(bytes)
+    const plain = await globalThis.crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: base64ToBytes(ivBase64),
+        additionalData: encoder.encode(context),
+      },
+      key,
+      encryptedBytes,
+    )
+    return new Uint8Array(plain)
+  } catch {
+    throw new Error('Backup-Passwort falsch oder verschlüsselter Backup-Inhalt beschädigt.')
+  }
+}
+
 export async function encryptBytesWithPassphrase(
   bytes,
   passphrase,
