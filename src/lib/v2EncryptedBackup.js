@@ -1,16 +1,18 @@
 import { supabase } from './supabase'
 import {
-  decryptBytesWithPassphrase,
-  encryptBytesWithPassphrase,
+  createBackupPassphraseKey,
+  decryptBackupBytesRaw,
+  encryptBackupBytesRaw,
   sha256Hex,
+  unlockBackupPassphraseKey,
 } from './v2Crypto'
 
 const BUCKET = 'doku-vault'
-const BACKUP_FILE_NAME = 'physiooptima-backup.enc.json'
-const BACKUP_CONTEXT = 'physiooptima:v2:full-supabase-backup'
-const WRAPPER_FORMAT = 'physiooptima-encrypted-supabase-backup'
-const PAYLOAD_FORMAT = 'physiooptima-supabase-backup-payload'
-const VERSION = 1
+const HEADER_ENTRY = 'header.json'
+const MANIFEST_ENTRY = 'manifest.bin'
+const HEADER_FORMAT = 'physiooptima-encrypted-supabase-backup'
+const MANIFEST_FORMAT = 'physiooptima-supabase-backup-manifest'
+const VERSION = 2
 
 const TABLE_SPECS = [
   {
@@ -51,6 +53,9 @@ const FILE_SPECS = [
   { tableKey: 'libraryItems', sourceTable: 'library_items' },
 ]
 
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
 function countMap(tables) {
   return {
     patients: tables.patients?.length || 0,
@@ -65,7 +70,9 @@ function countMap(tables) {
 function assertCounts(expected, actual) {
   for (const key of Object.keys(actual)) {
     if ((expected?.[key] ?? -1) !== actual[key]) {
-      throw new Error(`Backup-Prüfung: Anzahl ${key} stimmt nicht (${expected?.[key]} ≠ ${actual[key]}).`)
+      throw new Error(
+        `Backup-Prüfung: Anzahl ${key} stimmt nicht (${expected?.[key]} ≠ ${actual[key]}).`,
+      )
     }
   }
 }
@@ -98,30 +105,6 @@ function assertRelations(tables) {
       throw new Error(`Backup-Prüfung: Befund ${row.id} verweist auf fehlenden Patienten.`)
     }
   }
-}
-
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const value = String(reader.result || '')
-      const comma = value.indexOf(',')
-      if (comma < 0) {
-        reject(new Error('Datei konnte nicht für das Backup kodiert werden.'))
-        return
-      }
-      resolve(value.slice(comma + 1))
-    }
-    reader.onerror = () => reject(new Error('Datei konnte nicht für das Backup gelesen werden.'))
-    reader.readAsDataURL(blob)
-  })
-}
-
-function base64ToBytes(base64) {
-  const binary = atob(String(base64 || ''))
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
-  return bytes
 }
 
 async function fetchTables(userId, onProgress) {
@@ -163,159 +146,212 @@ function collectFileReferences(tables) {
   return refs
 }
 
-async function downloadFiles(refs, onProgress) {
-  const files = []
-  let totalPlainBytes = 0
-  let missingDeletedFiles = 0
+let crcTable = null
 
-  for (let i = 0; i < refs.length; i += 1) {
-    const ref = refs[i]
-    onProgress?.(`Sichere Datei ${i + 1}/${refs.length} …`)
+function getCrcTable() {
+  if (crcTable) return crcTable
 
-    const { data, error } = await supabase.storage.from(BUCKET).download(ref.storagePath)
-
-    if (error) {
-      if (ref.deletedAt) {
-        missingDeletedFiles += 1
-        files.push({
-          ...ref,
-          missing: true,
-          size: 0,
-          sha256: '',
-          dataBase64: '',
-        })
-        continue
-      }
-
-      throw new Error(
-        `Aktive Datei konnte nicht gesichert werden (${ref.sourceTable}, ${ref.rowId}): ${error.message}`,
-      )
+  crcTable = new Uint32Array(256)
+  for (let i = 0; i < 256; i += 1) {
+    let c = i
+    for (let k = 0; k < 8; k += 1) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
     }
+    crcTable[i] = c >>> 0
+  }
 
-    const bytes = new Uint8Array(await data.arrayBuffer())
-    const sha256 = await sha256Hex(bytes)
-    const dataBase64 = await blobToBase64(new Blob([bytes], { type: 'application/octet-stream' }))
-    totalPlainBytes += bytes.byteLength
+  return crcTable
+}
 
-    files.push({
-      ...ref,
-      missing: false,
-      size: bytes.byteLength,
-      sha256,
-      dataBase64,
+function crc32(bytes) {
+  const table = getCrcTable()
+  let crc = 0xffffffff
+
+  for (let i = 0; i < bytes.length; i += 1) {
+    crc = table[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8)
+  }
+
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function localZipHeader(nameBytes, dataLength, crc) {
+  const bytes = new Uint8Array(30 + nameBytes.length)
+  const view = new DataView(bytes.buffer)
+  let offset = 0
+
+  const u16 = value => { view.setUint16(offset, value, true); offset += 2 }
+  const u32 = value => { view.setUint32(offset, value, true); offset += 4 }
+
+  u32(0x04034b50)
+  u16(20)
+  u16(0)
+  u16(0)
+  u16(0)
+  u16(0)
+  u32(crc)
+  u32(dataLength)
+  u32(dataLength)
+  u16(nameBytes.length)
+  u16(0)
+  bytes.set(nameBytes, offset)
+
+  return bytes
+}
+
+function centralZipHeader(entry) {
+  const nameBytes = encoder.encode(entry.name)
+  const bytes = new Uint8Array(46 + nameBytes.length)
+  const view = new DataView(bytes.buffer)
+  let offset = 0
+
+  const u16 = value => { view.setUint16(offset, value, true); offset += 2 }
+  const u32 = value => { view.setUint32(offset, value, true); offset += 4 }
+
+  u32(0x02014b50)
+  u16(20)
+  u16(20)
+  u16(0)
+  u16(0)
+  u16(0)
+  u16(0)
+  u32(entry.crc)
+  u32(entry.size)
+  u32(entry.size)
+  u16(nameBytes.length)
+  u16(0)
+  u16(0)
+  u16(0)
+  u16(0)
+  u32(0)
+  u32(entry.offset)
+  bytes.set(nameBytes, offset)
+
+  return bytes
+}
+
+class StoredZipBuilder {
+  constructor() {
+    this.parts = []
+    this.entries = []
+    this.offset = 0
+  }
+
+  add(name, dataInput) {
+    const data = dataInput instanceof Uint8Array
+      ? dataInput
+      : new Uint8Array(dataInput)
+    const nameBytes = encoder.encode(name)
+    const crc = crc32(data)
+    const header = localZipHeader(nameBytes, data.byteLength, crc)
+    const entryOffset = this.offset
+
+    this.parts.push(header)
+    this.parts.push(new Blob([data], { type: 'application/octet-stream' }))
+    this.offset += header.byteLength + data.byteLength
+
+    this.entries.push({
+      name,
+      crc,
+      size: data.byteLength,
+      offset: entryOffset,
     })
   }
 
-  return { files, totalPlainBytes, missingDeletedFiles }
+  finish() {
+    const centralStart = this.offset
+    let centralSize = 0
+    const centralParts = []
+
+    for (const entry of this.entries) {
+      const header = centralZipHeader(entry)
+      centralParts.push(header)
+      centralSize += header.byteLength
+    }
+
+    const end = new Uint8Array(22)
+    const view = new DataView(end.buffer)
+    let offset = 0
+    const u16 = value => { view.setUint16(offset, value, true); offset += 2 }
+    const u32 = value => { view.setUint32(offset, value, true); offset += 4 }
+
+    u32(0x06054b50)
+    u16(0)
+    u16(0)
+    u16(this.entries.length)
+    u16(this.entries.length)
+    u32(centralSize)
+    u32(centralStart)
+    u16(0)
+
+    return new Blob(
+      [...this.parts, ...centralParts, end],
+      { type: 'application/zip' },
+    )
+  }
 }
 
-function makeZip(fileName, bytesInput) {
-  const fileNameBytes = new TextEncoder().encode(fileName)
-  const dataBytes = bytesInput instanceof Uint8Array
-    ? bytesInput
-    : new Uint8Array(bytesInput)
+async function readSliceBytes(blob, start, length) {
+  return new Uint8Array(
+    await blob.slice(start, start + length).arrayBuffer(),
+  )
+}
 
-  const table = new Uint32Array(256).map((_, i) => {
-    let c = i
-    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
-    return c >>> 0
-  })
+async function readUint32At(blob, offset) {
+  const bytes = await readSliceBytes(blob, offset, 4)
+  if (bytes.byteLength < 4) return null
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true)
+}
 
-  let crc = 0xffffffff
-  for (let i = 0; i < dataBytes.length; i += 1) {
-    crc = table[(crc ^ dataBytes[i]) & 0xff] ^ (crc >>> 8)
-  }
-  crc = (crc ^ 0xffffffff) >>> 0
-
-  const localHeaderSize = 30 + fileNameBytes.length
-  const centralHeaderSize = 46 + fileNameBytes.length
-  const totalSize = localHeaderSize + dataBytes.length + centralHeaderSize + 22
-  const buffer = new ArrayBuffer(totalSize)
-  const view = new DataView(buffer)
-  const bytes = new Uint8Array(buffer)
+async function indexStoredZip(file) {
+  const entries = new Map()
   let offset = 0
 
-  const write32 = value => { view.setUint32(offset, value, true); offset += 4 }
-  const write16 = value => { view.setUint16(offset, value, true); offset += 2 }
-  const writeBytes = value => { bytes.set(value, offset); offset += value.length }
+  while (offset + 4 <= file.size) {
+    const signature = await readUint32At(file, offset)
+    if (signature === 0x02014b50 || signature === 0x06054b50 || signature === null) break
+    if (signature !== 0x04034b50) {
+      throw new Error('ZIP-Struktur ist unbekannt oder beschädigt.')
+    }
 
-  write32(0x04034b50)
-  write16(20)
-  write16(0)
-  write16(0)
-  write16(0)
-  write16(0)
-  write32(crc)
-  write32(dataBytes.length)
-  write32(dataBytes.length)
-  write16(fileNameBytes.length)
-  write16(0)
-  writeBytes(fileNameBytes)
-  writeBytes(dataBytes)
+    const header = await readSliceBytes(file, offset, 30)
+    if (header.byteLength !== 30) throw new Error('ZIP-Kopf ist unvollständig.')
+    const view = new DataView(header.buffer, header.byteOffset, header.byteLength)
 
-  const centralStart = offset
-  write32(0x02014b50)
-  write16(20)
-  write16(20)
-  write16(0)
-  write16(0)
-  write16(0)
-  write16(0)
-  write32(crc)
-  write32(dataBytes.length)
-  write32(dataBytes.length)
-  write16(fileNameBytes.length)
-  write16(0)
-  write16(0)
-  write16(0)
-  write16(0)
-  write32(0)
-  write32(0)
-  writeBytes(fileNameBytes)
+    const compressionMethod = view.getUint16(8, true)
+    const compressedSize = view.getUint32(18, true)
+    const uncompressedSize = view.getUint32(22, true)
+    const fileNameLength = view.getUint16(26, true)
+    const extraLength = view.getUint16(28, true)
 
-  const centralSize = offset - centralStart
-  write32(0x06054b50)
-  write16(0)
-  write16(0)
-  write16(1)
-  write16(1)
-  write32(centralSize)
-  write32(centralStart)
-  write16(0)
+    if (compressionMethod !== 0 || compressedSize !== uncompressedSize) {
+      throw new Error('Backup-ZIP verwendet eine nicht unterstützte Kompression.')
+    }
 
-  return new Blob([buffer], { type: 'application/zip' })
+    const nameBytes = await readSliceBytes(file, offset + 30, fileNameLength)
+    const name = decoder.decode(nameBytes)
+    const dataStart = offset + 30 + fileNameLength + extraLength
+    const dataEnd = dataStart + compressedSize
+
+    if (dataEnd > file.size) {
+      throw new Error('Backup-ZIP ist unvollständig.')
+    }
+
+    entries.set(name, {
+      name,
+      start: dataStart,
+      size: compressedSize,
+    })
+
+    offset = dataEnd
+  }
+
+  return entries
 }
 
-async function readZipSingleFile(file) {
-  const buffer = await file.arrayBuffer()
-  const view = new DataView(buffer)
-  const bytes = new Uint8Array(buffer)
-
-  if (bytes.length < 30 || view.getUint32(0, true) !== 0x04034b50) {
-    throw new Error('Die Datei ist kein unterstütztes ZIP-Backup.')
-  }
-
-  const compressionMethod = view.getUint16(8, true)
-  const compressedSize = view.getUint32(18, true)
-  const fileNameLength = view.getUint16(26, true)
-  const extraLength = view.getUint16(28, true)
-  const fileNameStart = 30
-  const fileNameEnd = fileNameStart + fileNameLength
-  const fileName = new TextDecoder().decode(bytes.slice(fileNameStart, fileNameEnd))
-  const dataStart = fileNameEnd + extraLength
-  const dataEnd = dataStart + compressedSize
-
-  if (fileName !== BACKUP_FILE_NAME) {
-    throw new Error('ZIP enthält kein PhysioOptima-Vollbackup.')
-  }
-  if (compressionMethod !== 0) {
-    throw new Error('Dieses Backup verwendet eine nicht unterstützte ZIP-Kompression.')
-  }
-  if (dataEnd > bytes.length) {
-    throw new Error('ZIP ist unvollständig oder beschädigt.')
-  }
-
-  return bytes.slice(dataStart, dataEnd)
+async function readIndexedEntry(file, entries, name) {
+  const entry = entries.get(name)
+  if (!entry) throw new Error(`Backup-ZIP enthält ${name} nicht.`)
+  return readSliceBytes(file, entry.start, entry.size)
 }
 
 function makeBackupFileName(date = new Date()) {
@@ -334,6 +370,18 @@ function makeBackupFileName(date = new Date()) {
   ].join('')
 }
 
+function fileAad(backupId, index) {
+  return `physiooptima:v2:backup:${backupId}:file:${index}`
+}
+
+function manifestAad(backupId) {
+  return `physiooptima:v2:backup:${backupId}:manifest`
+}
+
+function yieldToBrowser() {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
 export async function createEncryptedSupabaseBackup(userId, passphrase, onProgress) {
   if (!userId) throw new Error('Bitte zuerst bei Supabase anmelden.')
   if (!navigator.onLine) throw new Error('Für das Cloud-Backup wird eine Internetverbindung benötigt.')
@@ -343,46 +391,108 @@ export async function createEncryptedSupabaseBackup(userId, passphrase, onProgre
   assertRelations(tables)
 
   const refs = collectFileReferences(tables)
-  const {
-    files,
-    totalPlainBytes,
-    missingDeletedFiles,
-  } = await downloadFiles(refs, onProgress)
-
   const counts = countMap(tables)
+  const backupId = crypto.randomUUID()
   const exportedAt = new Date().toISOString()
-  const payload = {
-    format: PAYLOAD_FORMAT,
+
+  onProgress?.('Leite lokalen Backup-Schlüssel ab …')
+  const { key, kdf } = await createBackupPassphraseKey(passphrase)
+  const zip = new StoredZipBuilder()
+  const fileManifest = []
+  let totalPlainFileBytes = 0
+  let missingDeletedFiles = 0
+  let encryptedFiles = 0
+
+  for (let i = 0; i < refs.length; i += 1) {
+    const ref = refs[i]
+    onProgress?.(`Datei ${i + 1}/${refs.length}: laden und einzeln verschlüsseln …`)
+
+    const { data, error } = await supabase.storage.from(BUCKET).download(ref.storagePath)
+
+    if (error) {
+      if (ref.deletedAt) {
+        missingDeletedFiles += 1
+        fileManifest.push({
+          ...ref,
+          missing: true,
+          size: 0,
+          sha256: '',
+          entryName: '',
+          iv: '',
+          aad: '',
+        })
+        continue
+      }
+
+      throw new Error(
+        `Aktive Datei konnte nicht gesichert werden (${ref.sourceTable}, ${ref.rowId}): ${error.message}`,
+      )
+    }
+
+    const plainBytes = new Uint8Array(await data.arrayBuffer())
+    const sha256 = await sha256Hex(plainBytes)
+    const aad = fileAad(backupId, i)
+    const encrypted = await encryptBackupBytesRaw(plainBytes, key, aad)
+    const entryName = `files/${String(i + 1).padStart(4, '0')}.bin`
+
+    zip.add(entryName, encrypted.data)
+
+    totalPlainFileBytes += plainBytes.byteLength
+    encryptedFiles += 1
+    fileManifest.push({
+      ...ref,
+      missing: false,
+      size: plainBytes.byteLength,
+      sha256,
+      entryName,
+      iv: encrypted.iv,
+      aad,
+    })
+
+    await yieldToBrowser()
+  }
+
+  const manifest = {
+    format: MANIFEST_FORMAT,
     version: VERSION,
+    backupId,
     exportedAt,
     sourceOwnerId: userId,
-    manifest: {
-      counts,
-      fileCount: files.length,
-      missingDeletedFiles,
-      totalPlainFileBytes: totalPlainBytes,
-    },
+    counts,
+    fileCount: fileManifest.length,
+    encryptedFiles,
+    missingDeletedFiles,
+    totalPlainFileBytes,
     tables,
-    files,
+    files: fileManifest,
   }
 
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(payload))
+  const manifestBytes = encoder.encode(JSON.stringify(manifest))
+  const manifestContext = manifestAad(backupId)
 
-  onProgress?.('Verschlüssele vollständiges Backup lokal im Browser …')
-  const encrypted = await encryptBytesWithPassphrase(
-    payloadBytes,
-    passphrase,
-    BACKUP_CONTEXT,
+  onProgress?.('Verschlüssele Manifest …')
+  const encryptedManifest = await encryptBackupBytesRaw(
+    manifestBytes,
+    key,
+    manifestContext,
   )
+  zip.add(MANIFEST_ENTRY, encryptedManifest.data)
 
-  const wrapper = {
-    format: WRAPPER_FORMAT,
+  const header = {
+    format: HEADER_FORMAT,
     version: VERSION,
-    encryption: encrypted,
+    backupId,
+    kdf,
+    manifest: {
+      entryName: MANIFEST_ENTRY,
+      iv: encryptedManifest.iv,
+      aad: manifestContext,
+    },
   }
+  zip.add(HEADER_ENTRY, encoder.encode(JSON.stringify(header)))
 
-  const wrapperBytes = new TextEncoder().encode(JSON.stringify(wrapper))
-  const zipBlob = makeZip(BACKUP_FILE_NAME, wrapperBytes)
+  onProgress?.('Baue speicherschonendes ZIP …')
+  const zipBlob = zip.finish()
 
   onProgress?.('Verschlüsseltes ZIP ist fertig.')
 
@@ -391,9 +501,10 @@ export async function createEncryptedSupabaseBackup(userId, passphrase, onProgre
     fileName: makeBackupFileName(),
     summary: {
       counts,
-      fileCount: files.length,
+      fileCount: fileManifest.length,
+      encryptedFiles,
       missingDeletedFiles,
-      totalPlainFileBytes: totalPlainBytes,
+      totalPlainFileBytes,
       zipBytes: zipBlob.size,
       exportedAt,
     },
@@ -401,78 +512,120 @@ export async function createEncryptedSupabaseBackup(userId, passphrase, onProgre
 }
 
 export async function verifyEncryptedSupabaseBackup(file, passphrase, onProgress) {
-  onProgress?.('Öffne verschlüsseltes ZIP …')
-  const wrapperBytes = await readZipSingleFile(file)
-  const wrapper = JSON.parse(new TextDecoder().decode(wrapperBytes))
+  onProgress?.('Indexiere ZIP ohne es komplett in den Arbeitsspeicher zu laden …')
+  const entries = await indexStoredZip(file)
 
-  if (wrapper.format !== WRAPPER_FORMAT || wrapper.version !== VERSION) {
+  const headerBytes = await readIndexedEntry(file, entries, HEADER_ENTRY)
+  let header
+  try {
+    header = JSON.parse(decoder.decode(headerBytes))
+  } catch {
+    throw new Error('Backup-Kopf ist beschädigt.')
+  }
+
+  if (header.format !== HEADER_FORMAT || header.version !== VERSION) {
     throw new Error('Unbekanntes oder veraltetes PhysioOptima-Backupformat.')
   }
 
-  onProgress?.('Entschlüssele Backup lokal im Browser …')
-  const payloadBytes = await decryptBytesWithPassphrase(
-    wrapper.encryption,
-    passphrase,
-    BACKUP_CONTEXT,
+  onProgress?.('Leite Backup-Schlüssel ab …')
+  const key = await unlockBackupPassphraseKey(passphrase, header.kdf)
+
+  const encryptedManifest = await readIndexedEntry(
+    file,
+    entries,
+    header.manifest?.entryName || MANIFEST_ENTRY,
   )
-  const payload = JSON.parse(new TextDecoder().decode(payloadBytes))
-  if (payload.format !== PAYLOAD_FORMAT || payload.version !== VERSION) {
-    throw new Error('Entschlüsselter Backup-Inhalt hat ein unbekanntes Format.')
+
+  onProgress?.('Entschlüssele kleines Manifest …')
+  const manifestBytes = await decryptBackupBytesRaw(
+    encryptedManifest,
+    key,
+    header.manifest?.iv,
+    header.manifest?.aad,
+  )
+
+  let manifest
+  try {
+    manifest = JSON.parse(decoder.decode(manifestBytes))
+  } catch {
+    throw new Error('Entschlüsseltes Backup-Manifest ist beschädigt.')
   }
 
-  const counts = countMap(payload.tables || {})
-  assertCounts(payload.manifest?.counts, counts)
-  assertRelations(payload.tables || {})
+  if (
+    manifest.format !== MANIFEST_FORMAT ||
+    manifest.version !== VERSION ||
+    manifest.backupId !== header.backupId
+  ) {
+    throw new Error('Entschlüsseltes Backup-Manifest hat ein unbekanntes Format.')
+  }
+
+  const counts = countMap(manifest.tables || {})
+  assertCounts(manifest.counts, counts)
+  assertRelations(manifest.tables || {})
 
   let verifiedFiles = 0
   let missingDeletedFiles = 0
   let verifiedBytes = 0
 
-  for (let i = 0; i < (payload.files || []).length; i += 1) {
-    const item = payload.files[i]
-    onProgress?.(`Prüfe gesicherte Datei ${i + 1}/${payload.files.length} …`)
+  for (let i = 0; i < (manifest.files || []).length; i += 1) {
+    const item = manifest.files[i]
+    onProgress?.(`Prüfe Datei ${i + 1}/${manifest.files.length} einzeln …`)
 
     if (item.missing) {
       if (!item.deletedAt) {
-        throw new Error(`Backup enthält eine fehlende aktive Datei: ${item.sourceTable}/${item.rowId}`)
+        throw new Error(
+          `Backup enthält eine fehlende aktive Datei: ${item.sourceTable}/${item.rowId}`,
+        )
       }
       missingDeletedFiles += 1
       continue
     }
 
-    const bytes = base64ToBytes(item.dataBase64)
-    if (bytes.byteLength !== item.size) {
+    const encryptedBytes = await readIndexedEntry(file, entries, item.entryName)
+    const plainBytes = await decryptBackupBytesRaw(
+      encryptedBytes,
+      key,
+      item.iv,
+      item.aad,
+    )
+
+    if (plainBytes.byteLength !== item.size) {
       throw new Error(`Dateigröße stimmt nicht: ${item.sourceTable}/${item.rowId}`)
     }
 
-    const hash = await sha256Hex(bytes)
+    const hash = await sha256Hex(plainBytes)
     if (hash !== item.sha256) {
       throw new Error(`Datei-Prüfsumme stimmt nicht: ${item.sourceTable}/${item.rowId}`)
     }
 
     verifiedFiles += 1
-    verifiedBytes += bytes.byteLength
+    verifiedBytes += plainBytes.byteLength
+
+    await yieldToBrowser()
   }
 
-  if ((payload.files || []).length !== (payload.manifest?.fileCount ?? -1)) {
-    throw new Error('Anzahl der Dateieinträge stimmt nicht mit dem verschlüsselten Manifest überein.')
+  if ((manifest.files || []).length !== manifest.fileCount) {
+    throw new Error('Anzahl der Dateieinträge stimmt nicht mit dem Manifest überein.')
   }
-  if (missingDeletedFiles !== (payload.manifest?.missingDeletedFiles || 0)) {
+  if (verifiedFiles !== manifest.encryptedFiles) {
+    throw new Error('Anzahl der geprüften Dateien stimmt nicht mit dem Manifest überein.')
+  }
+  if (missingDeletedFiles !== manifest.missingDeletedFiles) {
     throw new Error('Anzahl fehlender gelöschter Dateien stimmt nicht überein.')
   }
-  if (verifiedBytes !== (payload.manifest?.totalPlainFileBytes || 0)) {
-    throw new Error('Gesamtgröße der gesicherten Dateien stimmt nicht überein.')
+  if (verifiedBytes !== manifest.totalPlainFileBytes) {
+    throw new Error('Gesamtgröße der geprüften Dateien stimmt nicht überein.')
   }
 
   onProgress?.('Wiederherstellungstest bestanden.')
 
   return {
     counts,
-    fileCount: payload.files?.length || 0,
+    fileCount: manifest.fileCount,
     verifiedFiles,
     missingDeletedFiles,
     verifiedBytes,
-    exportedAt: payload.exportedAt || '',
-    sourceOwnerId: payload.sourceOwnerId || '',
+    exportedAt: manifest.exportedAt || '',
+    sourceOwnerId: manifest.sourceOwnerId || '',
   }
 }
