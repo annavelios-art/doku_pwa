@@ -252,6 +252,43 @@ export async function decryptPracticeText(envelope, practiceKey, expectedContext
   return decoder.decode(plain)
 }
 
+
+export async function encryptPracticeBytes(bytes, practiceKey, context) {
+  if (!practiceKey) throw new Error('Praxisschlüssel ist nicht entsperrt.')
+  if (!context) throw new Error('Für Dateiverschlüsselung fehlt der technische Kontext.')
+
+  const plainBytes = bytes instanceof Uint8Array
+    ? bytes
+    : new Uint8Array(bytes)
+
+  const encrypted = await aesEncryptBytes(plainBytes, practiceKey, context)
+
+  return {
+    version: 1,
+    algorithm: 'AES-256-GCM',
+    aad: context,
+    ...encrypted,
+  }
+}
+
+export async function decryptPracticeBytes(envelope, practiceKey, expectedContext) {
+  if (!practiceKey) throw new Error('Praxisschlüssel ist nicht entsperrt.')
+  if (!expectedContext || envelope?.aad !== expectedContext) {
+    throw new Error('Die verschlüsselte Datei gehört nicht an diese Stelle.')
+  }
+
+  return aesDecryptBytes(envelope, practiceKey, expectedContext)
+}
+
+export async function sha256Hex(bytes) {
+  ensureCrypto()
+  const plainBytes = bytes instanceof Uint8Array
+    ? bytes
+    : new Uint8Array(bytes)
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', plainBytes)
+  return bytesToHex(new Uint8Array(digest))
+}
+
 export const V2_CRYPTO_PARAMETERS = Object.freeze({
   algorithm: 'AES-256-GCM',
   kdf: 'PBKDF2-SHA256',
