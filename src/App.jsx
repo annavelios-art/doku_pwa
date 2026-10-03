@@ -54,8 +54,13 @@ import {
 import {
   getEncryptedLabFileId, getEncryptedMiniPracticeIds, loadEncryptedFantasyPatient,
   loadEncryptedLabFile, loadEncryptedMiniPractice, saveEncryptedFantasyPatient,
-  saveEncryptedLabFile, saveEncryptedMiniPractice,
+  saveEncryptedLabFile, saveEncryptedMiniDocEntryPayload, saveEncryptedMiniPractice,
 } from './lib/supabaseCryptoLab'
+import {
+  clearEncryptedOfflineLab, getEncryptedOfflineOutbox, inspectEncryptedOfflineLabRaw,
+  loadEncryptedOfflineSnapshot, queueEncryptedOfflineDocEntry,
+  removeEncryptedOfflineOutboxItem, saveEncryptedOfflineSnapshot,
+} from './lib/v2EncryptedOfflineLab'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -123,6 +128,10 @@ const V2_CRYPTO_MINI_PRESCRIPTION = Object.freeze({
 const V2_CRYPTO_MINI_DOC_ENTRY = Object.freeze({
   entryDate: '2026-10-03',
   text: 'Schulter rechts: Elevation eingeschränkt. Behandlung gut vertragen.',
+})
+const V2_CRYPTO_MINI_DOC_ENTRY_OFFLINE = Object.freeze({
+  entryDate: '2026-10-03',
+  text: 'Schulter rechts: Offline-Test – Elevation verbessert. Behandlung gut vertragen.',
 })
 
 function miniPatientContext(patientId) {
@@ -604,6 +613,8 @@ export default function App() {
   const [cryptoLabFileCipherInfo, setCryptoLabFileCipherInfo] = useState(null)
   const [cryptoLabFileResult, setCryptoLabFileResult] = useState(null)
   const [cryptoLabFileUrl, setCryptoLabFileUrl] = useState('')
+  const [cryptoOfflineAudit, setCryptoOfflineAudit] = useState(null)
+  const [cryptoOfflinePractice, setCryptoOfflinePractice] = useState(null)
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -2342,9 +2353,10 @@ async function handleImportChangeZip(event) {
       if (
         JSON.stringify(miniPractice.patient) !== JSON.stringify(V2_CRYPTO_MINI_PATIENT) ||
         JSON.stringify(miniPractice.prescription) !== JSON.stringify(V2_CRYPTO_MINI_PRESCRIPTION) ||
-        JSON.stringify(miniPractice.docEntry) !== JSON.stringify(V2_CRYPTO_MINI_DOC_ENTRY)
+        miniPractice.docEntry?.entryDate !== V2_CRYPTO_MINI_DOC_ENTRY.entryDate ||
+        !String(miniPractice.docEntry?.text || '').trim()
       ) {
-        throw new Error('Entschlüsselte Mini-Praxis stimmt nicht mit den Testdaten überein.')
+        throw new Error('Entschlüsselte Mini-Praxis stimmt nicht mit der erwarteten Teststruktur überein.')
       }
 
       setCryptoMiniCipherSummary([
@@ -2546,6 +2558,196 @@ async function handleImportChangeZip(event) {
     }
   }
 
+  async function refreshCryptoOfflineAudit() {
+    const audit = await inspectEncryptedOfflineLabRaw()
+    setCryptoOfflineAudit(audit)
+    return audit
+  }
+
+  async function decryptCryptoOfflineSnapshot(rows) {
+    if (!rows) throw new Error('Noch keine verschlüsselte Offline-Kopie vorhanden.')
+    if (!cryptoPracticeKeyRef.current) {
+      throw new Error('Bitte den Test-Praxisschlüssel zuerst entsperren.')
+    }
+
+    if (rows.prescription.parentId !== rows.patient.id) {
+      throw new Error('Offline-Verknüpfung Patient → Verordnung stimmt nicht.')
+    }
+    if (rows.docEntry.parentId !== rows.prescription.id) {
+      throw new Error('Offline-Verknüpfung Verordnung → Doku stimmt nicht.')
+    }
+
+    const [patientJson, prescriptionJson, docEntryJson] = await Promise.all([
+      decryptPracticeText(
+        rows.patient.payload,
+        cryptoPracticeKeyRef.current,
+        miniPatientContext(rows.patient.id),
+      ),
+      decryptPracticeText(
+        rows.prescription.payload,
+        cryptoPracticeKeyRef.current,
+        miniPrescriptionContext(rows.prescription.id, rows.patient.id),
+      ),
+      decryptPracticeText(
+        rows.docEntry.payload,
+        cryptoPracticeKeyRef.current,
+        miniDocEntryContext(rows.docEntry.id, rows.prescription.id),
+      ),
+    ])
+
+    return {
+      patient: JSON.parse(patientJson),
+      prescription: JSON.parse(prescriptionJson),
+      docEntry: JSON.parse(docEntryJson),
+    }
+  }
+
+  async function handleSeedEncryptedOfflineCache() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (!cloudUser) throw new Error('Bitte zuerst bei Supabase anmelden.')
+      if (!navigator.onLine) {
+        throw new Error('Zum ersten Befüllen des Offline-Labors bitte kurz online sein.')
+      }
+
+      const rows = await loadEncryptedMiniPractice(cloudUser.id)
+      if (!rows) throw new Error('Bitte zuerst die verschlüsselte Mini-Praxis speichern.')
+
+      await clearEncryptedOfflineLab()
+      await saveEncryptedOfflineSnapshot(rows)
+      const audit = await refreshCryptoOfflineAudit()
+      setCryptoOfflinePractice(null)
+
+      if (!audit.safe) {
+        throw new Error(`Klartextfund im rohen IndexedDB-Test: ${audit.leaks.join(', ')}`)
+      }
+
+      setSuccessMessage(
+        'Verschlüsselte Mini-Praxis wurde in eine separate IndexedDB-Arbeitskopie übernommen. Rohdatenprüfung: kein Klartext gefunden.',
+      )
+    } catch (e) {
+      setError(`Offline-Cache vorbereiten fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  async function handleLoadEncryptedOfflineCache() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      const rows = await loadEncryptedOfflineSnapshot()
+      const practice = await decryptCryptoOfflineSnapshot(rows)
+      const audit = await refreshCryptoOfflineAudit()
+
+      if (!audit.safe) {
+        throw new Error(`Klartextfund im rohen IndexedDB-Test: ${audit.leaks.join(', ')}`)
+      }
+
+      setCryptoOfflinePractice(practice)
+      setSuccessMessage(
+        'Offline-Kopie aus IndexedDB geladen und erst im Arbeitsspeicher wieder lesbar gemacht.',
+      )
+    } catch (e) {
+      setError(`Offline lesen fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  async function handleQueueEncryptedOfflineEdit() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      const rows = await loadEncryptedOfflineSnapshot()
+      if (!rows) throw new Error('Bitte zuerst die verschlüsselte Offline-Kopie anlegen.')
+      if (!cryptoPracticeKeyRef.current) {
+        throw new Error('Bitte den Test-Praxisschlüssel zuerst entsperren.')
+      }
+
+      const editedPayload = await encryptPracticeText(
+        JSON.stringify(V2_CRYPTO_MINI_DOC_ENTRY_OFFLINE),
+        cryptoPracticeKeyRef.current,
+        miniDocEntryContext(rows.docEntry.id, rows.prescription.id),
+      )
+
+      await queueEncryptedOfflineDocEntry({
+        id: rows.docEntry.id,
+        prescriptionId: rows.prescription.id,
+        payload: editedPayload,
+      })
+
+      const updatedRows = await loadEncryptedOfflineSnapshot()
+      const practice = await decryptCryptoOfflineSnapshot(updatedRows)
+      const audit = await refreshCryptoOfflineAudit()
+
+      if (!audit.safe) {
+        throw new Error(`Klartextfund im rohen IndexedDB-Test: ${audit.leaks.join(', ')}`)
+      }
+
+      setCryptoOfflinePractice(practice)
+      setSuccessMessage(
+        'Offline-Doku geändert. Im Cache und in der Outbox liegt weiterhin nur Chiffretext.',
+      )
+    } catch (e) {
+      setError(`Offline-Änderung fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
+  async function handleSyncEncryptedOfflineOutbox() {
+    setError('')
+    setSuccessMessage('')
+    setCryptoBusy(true)
+
+    try {
+      if (!cloudUser) throw new Error('Bitte zuerst bei Supabase anmelden.')
+      if (!navigator.onLine) throw new Error('Zum Synchronisieren bitte wieder online gehen.')
+
+      const items = await getEncryptedOfflineOutbox()
+      if (items.length === 0) throw new Error('Die verschlüsselte Test-Outbox ist leer.')
+
+      let synced = 0
+      for (const item of items) {
+        if (item.kind !== 'docEntry') {
+          throw new Error(`Unbekannter Test-Outbox-Typ: ${item.kind}`)
+        }
+
+        await saveEncryptedMiniDocEntryPayload(
+          {
+            id: item.entityId,
+            prescriptionId: item.parentId,
+            payload: item.payload,
+          },
+          cloudUser.id,
+        )
+        await removeEncryptedOfflineOutboxItem(item.id)
+        synced += 1
+      }
+
+      const audit = await refreshCryptoOfflineAudit()
+      if (!audit.safe) {
+        throw new Error(`Klartextfund im rohen IndexedDB-Test: ${audit.leaks.join(', ')}`)
+      }
+
+      setSuccessMessage(
+        `${synced} verschlüsselte Offline-Änderung wurde nach Supabase übertragen – ohne die Outbox vorher in Klartext umzuwandeln.`,
+      )
+    } catch (e) {
+      setError(`Verschlüsselte Outbox synchronisieren fehlgeschlagen: ${e.message}`)
+    } finally {
+      setCryptoBusy(false)
+    }
+  }
+
   function handleLockCryptoLab() {
     cryptoPracticeKeyRef.current = null
     setCryptoUnlocked(false)
@@ -2554,15 +2756,17 @@ async function handleImportChangeZip(event) {
     setCryptoCloudPatient(null)
     setCryptoMiniPractice(null)
     setCryptoLabFileResult(null)
+    setCryptoOfflinePractice(null)
     if (cryptoLabFileUrl) URL.revokeObjectURL(cryptoLabFileUrl)
     setCryptoLabFileUrl('')
     setSuccessMessage('Test-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
   }
 
-  function handleResetCryptoLab() {
+  async function handleResetCryptoLab() {
     if (!window.confirm('Nur den lokalen Verschlüsselungstest zurücksetzen? Es sind keine Patientendaten daran gebunden.')) return
 
     window.localStorage.removeItem(V2_CRYPTO_LAB_STORAGE_KEY)
+    await clearEncryptedOfflineLab()
     cryptoPracticeKeyRef.current = null
     setCryptoLabConfigured(false)
     setCryptoUnlocked(false)
@@ -2579,6 +2783,8 @@ async function handleImportChangeZip(event) {
     setCryptoMiniPractice(null)
     setCryptoLabFileCipherInfo(null)
     setCryptoLabFileResult(null)
+    setCryptoOfflineAudit(null)
+    setCryptoOfflinePractice(null)
     if (cryptoLabFileUrl) URL.revokeObjectURL(cryptoLabFileUrl)
     setCryptoLabFileUrl('')
     setError('')
@@ -3976,6 +4182,83 @@ function openStoredFile(file) {
                                     Entschlüsseltes Test-PDF öffnen
                                   </a>
                                 )}
+                              </div>
+                            )}
+
+                            <div className="sync-status">
+                              <strong>🪨 Unter dem Browserboden: verschlüsseltes IndexedDB</strong>
+                              <span>
+                                Erst einmal online die verschlüsselte Mini-Praxis in eine separate Offline-Arbeitskopie übernehmen.
+                                Danach darfst du für den eigentlichen Test sogar WLAN/Mobilfunk ausschalten.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleSeedEncryptedOfflineCache}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Verschlüsselte Offline-Kopie anlegen
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLoadEncryptedOfflineCache}
+                              disabled={cryptoBusy}
+                            >
+                              Offline-Kopie laden + lokal entschlüsseln
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleQueueEncryptedOfflineEdit}
+                              disabled={cryptoBusy}
+                            >
+                              Offline-Doku ändern + verschlüsselt in Outbox
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-green"
+                              onClick={handleSyncEncryptedOfflineOutbox}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Verschlüsselte Outbox nach Supabase senden
+                            </button>
+
+                            {cryptoOfflineAudit && (
+                              <div className={`sync-status ${cryptoOfflineAudit.safe ? 'sync-status-active' : 'sync-status-error'}`}>
+                                <strong>Rohdatenprüfung IndexedDB</strong>
+                                <span>
+                                  Cache: {cryptoOfflineAudit.cacheCount} Datensätze ·
+                                  {' '}Outbox: {cryptoOfflineAudit.outboxCount} ·
+                                  {' '}Rohdaten: {cryptoOfflineAudit.rawChars} Zeichen
+                                </span>
+                                <span>
+                                  Klartextfundstellen: {cryptoOfflineAudit.leaks.length}
+                                  {cryptoOfflineAudit.safe ? ' – sauber' : ` – ${cryptoOfflineAudit.leaks.join(', ')}`}
+                                </span>
+                              </div>
+                            )}
+
+                            {cryptoOfflinePractice && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Nur im Arbeitsspeicher wieder lesbar</strong>
+                                <span>
+                                  {cryptoOfflinePractice.patient.firstName} {cryptoOfflinePractice.patient.lastName} ·
+                                  {' '}{formatDate(cryptoOfflinePractice.patient.birthDate)}
+                                </span>
+                                <span>
+                                  {formatDate(cryptoOfflinePractice.prescription.issueDate)} ·
+                                  {' '}{cryptoOfflinePractice.prescription.remedy}
+                                </span>
+                                <span>
+                                  {formatDate(cryptoOfflinePractice.docEntry.entryDate)} ·
+                                  {' '}{cryptoOfflinePractice.docEntry.text}
+                                </span>
                               </div>
                             )}
 
