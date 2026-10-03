@@ -879,3 +879,16 @@ justify-content:center;
   line-height: 1.15;
   white-space: normal;
 }
+
+
+.sync-conflict-box {
+  border: 1px solid #d8a73e;
+  background: #fff8e7;
+  border-radius: 12px;
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+.sync-conflict-box p {
+  margin: 0;
+}

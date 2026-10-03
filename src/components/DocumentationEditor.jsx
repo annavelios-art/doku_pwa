@@ -21,6 +21,8 @@ export default function DocumentationEditor({
   setFullscreenImage,
   handleRemoveImage,
   saving,
+  conflict,
+  onLoadConflict,
 }) {
   const [isDictating, setIsDictating] = useState(false)
   const [dictationStatus, setDictationStatus] = useState('')
@@ -94,6 +96,17 @@ export default function DocumentationEditor({
           <ArrowLeft size={16} />
           Abbrechen
         </button>
+
+        {conflict && (
+          <div className="sync-conflict-box">
+            <strong>Änderung auf einem anderen Gerät erkannt.</strong>
+            <p>Dein offener Doku-Text wurde nicht überschrieben.</p>
+            <p>Aktueller Stand: {conflict.entryDate} · {conflict.text?.slice(0, 90) || 'Ohne Text'}</p>
+            <button type="button" className="btn btn-ghost" onClick={onLoadConflict}>
+              Aktuellen Stand laden
+            </button>
+          </div>
+        )}
 
         <DateInput
   		value={docForm.entryDate}
@@ -171,7 +184,7 @@ export default function DocumentationEditor({
           <button type="button" className="btn btn-ghost" onClick={() => setView('prescriptionDetail')}>
             Abbrechen
           </button>
-          <button className="btn btn-primary" disabled={saving}>
+          <button className="btn btn-primary" disabled={saving || Boolean(conflict)}>
             <Save size={16} />
             {saving ? 'Speichern...' : 'Speichern'}
           </button>
