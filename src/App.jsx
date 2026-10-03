@@ -77,6 +77,10 @@ import {
   listV3PatientDocumentsForPatient, listV3PrescriptionsForPatient,
   loadV3DocEntryImages, loadV3LibraryItemFile, loadV3PatientDocumentFile,
 } from './lib/v3ReadOnly'
+import {
+  mirrorV3DocEntryById, mirrorV3LibraryItemById, mirrorV3PatientById,
+  mirrorV3PatientDocumentById, mirrorV3PrescriptionById,
+} from './lib/v3WriteMirror'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -651,6 +655,8 @@ export default function App() {
   const [v3BridgeProgress, setV3BridgeProgress] = useState('')
   const [v3BridgeVerification, setV3BridgeVerification] = useState(null)
   const [v3ReadMode, setV3ReadMode] = useState(false)
+  const [v3MirrorMode, setV3MirrorMode] = useState(false)
+  const [v3MirrorLastMessage, setV3MirrorLastMessage] = useState('')
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -663,6 +669,7 @@ export default function App() {
   const v3CandidateBundleRef = useRef(null)
   const v3PracticeKeyRef = useRef(null)
   const v3ReadModeRef = useRef(false)
+  const v3MirrorModeRef = useRef(false)
   const [userRole, setUserRole] = useState(() => window.localStorage.getItem('pwaUserRole') || USER_ROLES.OWNER)
   const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
   const [lastModifiedAt, setLastModifiedAt] = useState(() => readStoredTimestamp(LAST_MODIFIED_STORAGE_KEY))
@@ -771,7 +778,9 @@ export default function App() {
       setV3Counts(null)
       v3PracticeKeyRef.current = null
       v3ReadModeRef.current = false
+      v3MirrorModeRef.current = false
       setV3ReadMode(false)
+      setV3MirrorMode(false)
       setV3Unlocked(false)
       return () => { active = false }
     }
@@ -836,7 +845,9 @@ export default function App() {
         v3PracticeKeyRef.current = null
         v3CandidateBundleRef.current = null
         v3ReadModeRef.current = false
+        v3MirrorModeRef.current = false
         setV3ReadMode(false)
+        setV3MirrorMode(false)
         setV3Unlocked(false)
         setV3Keyring(null)
         setV3Counts(null)
@@ -3125,6 +3136,10 @@ async function handleImportChangeZip(event) {
       setError('Bitte zuerst den V3-Lesemodus beenden, bevor du den Praxisschlüssel sperrst.')
       return
     }
+    if (v3MirrorModeRef.current) {
+      setError('Bitte zuerst den V3-Schreibspiegel beenden, bevor du den Praxisschlüssel sperrst.')
+      return
+    }
 
     v3PracticeKeyRef.current = null
     setV3Unlocked(false)
@@ -3132,9 +3147,83 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('V3-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
   }
 
+  function ensureV3MirrorWriteReady() {
+    if (!v3MirrorModeRef.current) return
+    if (!navigator.onLine) {
+      throw new Error(
+        'V3-Schreibspiegel ist aktiv: Offline-Speichern ist in dieser Teststufe absichtlich gesperrt.',
+      )
+    }
+    if (!v3PracticeKeyRef.current) {
+      throw new Error('V3-Schreibspiegel ist aktiv, aber der Praxisschlüssel ist nicht entsperrt.')
+    }
+  }
+
+  async function runV3Mirror(label, action) {
+    if (!v3MirrorModeRef.current) return true
+
+    try {
+      await action()
+      const message = `🪞 ${label}: alte Speicherung + verschlüsselter V3-Spiegel geprüft.`
+      setV3MirrorLastMessage(message)
+      return true
+    } catch (e) {
+      setV3MirrorLastMessage(`⚠️ ${label}: V3-Spiegel unvollständig.`)
+      setError(
+        `${label} wurde in der bisherigen Praxis gespeichert, aber der V3-Spiegel ist fehlgeschlagen: ${e.message}`,
+      )
+      return false
+    }
+  }
+
+  function handleStartV3MirrorMode() {
+    setError('')
+    setSuccessMessage('')
+
+    if (!v3PracticeKeyRef.current || !v3Unlocked) {
+      setError('Bitte zuerst den V3-Praxisschlüssel entsperren.')
+      return
+    }
+    if (v3ReadModeRef.current) {
+      setError('Bitte zuerst den V3-Lesemodus beenden.')
+      return
+    }
+    if (!navigator.onLine) {
+      setError('Der erste Schreibspiegel-Test läuft absichtlich nur mit Internetverbindung.')
+      return
+    }
+    if (outboxCount > 0) {
+      setError(
+        `Bitte zuerst die ${outboxCount} wartenden Offline-Änderung(en) synchronisieren.`,
+      )
+      return
+    }
+
+    v3MirrorModeRef.current = true
+    setV3MirrorMode(true)
+    setV3MirrorLastMessage('Schreibspiegel bereit – noch wurde nichts verändert.')
+    setNav('patients')
+    setView('list')
+    setSuccessMessage(
+      '🪞 V3-Schreibspiegel aktiv. Neue Speicherungen werden zuerst normal und anschließend verschlüsselt nach V3 gespiegelt und gegengeprüft.',
+    )
+  }
+
+  function handleStopV3MirrorMode() {
+    v3MirrorModeRef.current = false
+    setV3MirrorMode(false)
+    setV3MirrorLastMessage('')
+    setSuccessMessage('V3-Schreibspiegel beendet.')
+  }
+
   async function handleEnterV3ReadMode() {
     setError('')
     setSuccessMessage('')
+
+    if (v3MirrorModeRef.current) {
+      setError('Bitte zuerst den V3-Schreibspiegel beenden.')
+      return
+    }
 
     if (!v3PracticeKeyRef.current || !v3Unlocked) {
       setError('Bitte zuerst den V3-Praxisschlüssel entsperren.')
