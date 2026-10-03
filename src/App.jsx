@@ -4034,7 +4034,6 @@ async function handleImportChangeZip(event) {
       if (patientConflict) throw new Error('Dieser Patient wurde auf einem anderen Gerät geändert. Bitte zuerst den aktuellen Stand laden.')
 
       if (v3PrimaryModeRef.current) {
-        if (!navigator.onLine) throw new Error('Die V3-Hauptbetrieb-Testfahrt speichert in dieser Stufe nur online.')
         if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
 
         const isNewV3 = !selectedPatient && !patientForm.id
@@ -4048,13 +4047,71 @@ async function handleImportChangeZip(event) {
           firstName: patientForm.firstName.trim(),
         }
 
-        const { patient: savedV3, conflict: conflictV3 } = await saveV3Patient(
-          candidateV3,
-          cloudUser.id,
-          v3PracticeKeyRef.current,
-          expectedV3,
-          modeV3,
-        )
+        const savePrimaryOffline = async () => {
+          const localSaved = localPendingRecord({
+            ...candidateV3,
+            createdAt: selectedPatient?.createdAt || patientForm.createdAt || '',
+            deletedAt: selectedPatient?.deletedAt || '',
+          })
+
+          await cachePatient(localSaved)
+          await queueEncryptedV3PrimaryOffline(
+            'patient',
+            localSaved,
+            '',
+            modeV3,
+            expectedV3,
+          )
+
+          setPatients(current => {
+            const exists = current.some(item => item.id === localSaved.id)
+            const next = exists
+              ? current.map(item => item.id === localSaved.id ? localSaved : item)
+              : [...current, localSaved]
+            return next.sort((a, b) =>
+              a.lastName.localeCompare(b.lastName, 'de') ||
+              a.firstName.localeCompare(b.firstName, 'de')
+            )
+          })
+
+          setPatientConflict(null)
+          setError('')
+          setSuccessMessage('Offline gespeichert – wartet verschlüsselt auf V3-Synchronisierung.')
+
+          if (selectedPatient) {
+            setSelectedPatient(localSaved)
+            setPatientForm(localSaved)
+            setView('patientDetail')
+          } else {
+            setSelectedPatient(null)
+            setPatientForm(EMPTY_PATIENT_FORM)
+            setView('list')
+          }
+        }
+
+        if (!navigator.onLine) {
+          await savePrimaryOffline()
+          return
+        }
+
+        let resultV3
+        try {
+          resultV3 = await saveV3Patient(
+            candidateV3,
+            cloudUser.id,
+            v3PracticeKeyRef.current,
+            expectedV3,
+            modeV3,
+          )
+        } catch (e) {
+          if (isConnectivityError(e)) {
+            await savePrimaryOffline()
+            return
+          }
+          throw e
+        }
+
+        const { patient: savedV3, conflict: conflictV3 } = resultV3
 
         if (conflictV3) {
           setPatientConflict(conflictV3)
@@ -4075,7 +4132,7 @@ async function handleImportChangeZip(event) {
           await loadListData()
         }
 
-        setSuccessMessage('🚗 V3-Hauptbetrieb: Patient direkt verschlüsselt in V3 gespeichert. Alte Klartexttabelle unverändert.')
+        setSuccessMessage('Patient direkt verschlüsselt in V3 gespeichert.')
         return
       }
 
@@ -4360,7 +4417,6 @@ async function handleImportChangeZip(event) {
       }
 
       if (v3PrimaryModeRef.current) {
-        if (!navigator.onLine) throw new Error('Die V3-Hauptbetrieb-Testfahrt speichert in dieser Stufe nur online.')
         if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
 
         const isNewV3 = !selectedPrescription && !prescriptionForm.id
@@ -4374,14 +4430,69 @@ async function handleImportChangeZip(event) {
           remedy: prescriptionForm.remedy.trim(),
         }
 
-        const { prescription: savedV3, conflict: conflictV3 } = await saveV3Prescription(
-          candidateV3,
-          selectedPatient.id,
-          cloudUser.id,
-          v3PracticeKeyRef.current,
-          expectedV3,
-          modeV3,
-        )
+        const savePrimaryOffline = async () => {
+          const localSaved = localPendingRecord({
+            ...candidateV3,
+            createdAt: selectedPrescription?.createdAt || prescriptionForm.createdAt || '',
+            deletedAt: selectedPrescription?.deletedAt || '',
+          })
+
+          await cachePrescription(localSaved)
+          await queueEncryptedV3PrimaryOffline(
+            'prescription',
+            localSaved,
+            selectedPatient.id,
+            modeV3,
+            expectedV3,
+          )
+
+          setPrescriptions(current => {
+            const exists = current.some(item => item.id === localSaved.id)
+            const next = exists
+              ? current.map(item => item.id === localSaved.id ? localSaved : item)
+              : [...current, localSaved]
+            return next.sort((a, b) => (b.issueDate || '').localeCompare(a.issueDate || ''))
+          })
+
+          setPrescriptionConflict(null)
+          setError('')
+          setSuccessMessage('Offline gespeichert – Verordnung wartet verschlüsselt auf V3-Synchronisierung.')
+
+          if (selectedPrescription) {
+            setSelectedPrescription(localSaved)
+            setPrescriptionForm(localSaved)
+            setView('prescriptionDetail')
+          } else {
+            setSelectedPrescription(null)
+            setPrescriptionForm(EMPTY_PRESCRIPTION_FORM)
+            setView('patientDetail')
+          }
+        }
+
+        if (!navigator.onLine) {
+          await savePrimaryOffline()
+          return
+        }
+
+        let resultV3
+        try {
+          resultV3 = await saveV3Prescription(
+            candidateV3,
+            selectedPatient.id,
+            cloudUser.id,
+            v3PracticeKeyRef.current,
+            expectedV3,
+            modeV3,
+          )
+        } catch (e) {
+          if (isConnectivityError(e)) {
+            await savePrimaryOffline()
+            return
+          }
+          throw e
+        }
+
+        const { prescription: savedV3, conflict: conflictV3 } = resultV3
 
         if (conflictV3) {
           setPrescriptionConflict(conflictV3)
@@ -4396,7 +4507,7 @@ async function handleImportChangeZip(event) {
         setPrescriptionForm(isNewV3 ? EMPTY_PRESCRIPTION_FORM : savedV3)
         setView(isNewV3 ? 'patientDetail' : 'prescriptionDetail')
         setPrescriptions(await listV3PrescriptionsForPatient(selectedPatient.id, v3PracticeKeyRef.current))
-        setSuccessMessage('🚗 V3-Hauptbetrieb: Verordnung direkt verschlüsselt in V3 gespeichert. Alte Klartexttabelle unverändert.')
+        setSuccessMessage('Verordnung direkt verschlüsselt in V3 gespeichert.')
         return
       }
 
@@ -4555,8 +4666,11 @@ async function handleImportChangeZip(event) {
       }
 
       if (v3PrimaryModeRef.current) {
-        if (!navigator.onLine) throw new Error('Die V3-Hauptbetrieb-Testfahrt speichert in dieser Stufe nur online.')
         if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+
+        const currentImageIdsV3 = docImages.map(image => image.id).sort().join('|')
+        const baseImageIdsV3 = docImageBaseIds.slice().sort().join('|')
+        const imagesChangedV3 = currentImageIdsV3 !== baseImageIdsV3
 
         const isNewV3 = !docBaseEntry && !docForm.id
         const idV3 = docBaseEntry?.id || docForm.id || crypto.randomUUID()
@@ -4569,14 +4683,69 @@ async function handleImportChangeZip(event) {
           text: docForm.text.trim(),
         }
 
-        const { entry: savedV3, conflict: conflictV3 } = await saveV3DocEntry(
-          candidateV3,
-          selectedPrescription.id,
-          cloudUser.id,
-          v3PracticeKeyRef.current,
-          expectedV3,
-          modeV3,
-        )
+        const savePrimaryOffline = async () => {
+          if (imagesChangedV3) {
+            throw new Error('Doku-Bilder können offline noch nicht geändert werden. Bitte Bildänderungen erst mit Internet speichern.')
+          }
+
+          const localSaved = localPendingRecord({
+            ...candidateV3,
+            createdAt: docBaseEntry?.createdAt || docForm.createdAt || '',
+            deletedAt: docBaseEntry?.deletedAt || '',
+          })
+
+          await cacheDocEntry(localSaved)
+          await queueEncryptedV3PrimaryOffline(
+            'docEntry',
+            localSaved,
+            selectedPrescription.id,
+            modeV3,
+            expectedV3,
+          )
+
+          setDocEntries(current => {
+            const exists = current.some(item => item.id === localSaved.id)
+            const next = exists
+              ? current.map(item => item.id === localSaved.id ? localSaved : item)
+              : [...current, localSaved]
+            return next.sort((a, b) =>
+              (b.entryDate || '').localeCompare(a.entryDate || '') ||
+              (b.createdAt || '').localeCompare(a.createdAt || '')
+            )
+          })
+
+          setDocForm(localSaved)
+          setDocBaseEntry(localSaved)
+          setDocConflict(null)
+          setError('')
+          setSuccessMessage('Offline gespeichert – Doku wartet verschlüsselt auf V3-Synchronisierung.')
+          setView('prescriptionDetail')
+        }
+
+        if (!navigator.onLine) {
+          await savePrimaryOffline()
+          return
+        }
+
+        let resultV3
+        try {
+          resultV3 = await saveV3DocEntry(
+            candidateV3,
+            selectedPrescription.id,
+            cloudUser.id,
+            v3PracticeKeyRef.current,
+            expectedV3,
+            modeV3,
+          )
+        } catch (e) {
+          if (isConnectivityError(e)) {
+            await savePrimaryOffline()
+            return
+          }
+          throw e
+        }
+
+        const { entry: savedV3, conflict: conflictV3 } = resultV3
 
         if (conflictV3) {
           setDocConflict(conflictV3)
@@ -4616,7 +4785,7 @@ async function handleImportChangeZip(event) {
         setDocBaseEntry(savedV3)
         setDocConflict(null)
         setView('prescriptionDetail')
-        setSuccessMessage('🚗 V3-Hauptbetrieb: Doku und Bilder direkt verschlüsselt in V3 gespeichert. Alte Klartexttabellen unverändert.')
+        setSuccessMessage('Doku und Bilder direkt verschlüsselt in V3 gespeichert.')
         return
       }
 
