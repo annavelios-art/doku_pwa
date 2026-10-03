@@ -894,7 +894,7 @@ export default function App() {
     const channel = supabase
       .channel('doku-v2-patients')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, payload => {
-        if (v3ReadModeRef.current) return
+        if (v3ReadModeRef.current || v3PrimaryModeRef.current) return
         if (payload.eventType === 'DELETE') {
           const removedId = payload.old?.id
           if (removedId) setPatients(current => current.filter(item => item.id !== removedId))
@@ -958,7 +958,7 @@ export default function App() {
     const channel = supabase
       .channel('doku-v2-prescriptions')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'prescriptions' }, payload => {
-        if (v3ReadModeRef.current) return
+        if (v3ReadModeRef.current || v3PrimaryModeRef.current) return
         if (payload.eventType === 'DELETE') {
           const removedId = payload.old?.id
           if (removedId) setPrescriptions(current => current.filter(item => item.id !== removedId))
@@ -1015,7 +1015,7 @@ export default function App() {
     const channel = supabase
       .channel('doku-v2-doc-entries')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'doc_entries' }, payload => {
-        if (v3ReadModeRef.current) return
+        if (v3ReadModeRef.current || v3PrimaryModeRef.current) return
         if (payload.eventType === 'DELETE') {
           const removedId = payload.old?.id
           if (removedId) {
@@ -1085,7 +1085,7 @@ export default function App() {
     const channel = supabase
       .channel('doku-v2-doc-images')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'doc_entry_images' }, async payload => {
-        if (v3ReadModeRef.current) return
+        if (v3ReadModeRef.current || v3PrimaryModeRef.current) return
         const row = payload.new || payload.old
         const docEntryId = row?.doc_entry_id
         if (!docEntryId) return
@@ -1124,7 +1124,7 @@ export default function App() {
     const channel = supabase
       .channel('doku-v2-patient-documents')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'patient_documents' }, async payload => {
-        if (v3ReadModeRef.current) return
+        if (v3ReadModeRef.current || v3PrimaryModeRef.current) return
         if (payload.eventType === 'DELETE') {
           const removedId = payload.old?.id
           if (removedId) {
@@ -1305,7 +1305,7 @@ export default function App() {
     setLoading(true)
     setError('')
 
-    if (v3ReadModeRef.current && !forceLegacy) {
+    if ((v3ReadModeRef.current || v3PrimaryModeRef.current) && !forceLegacy) {
       try {
         if (!v3PracticeKeyRef.current) {
           throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
@@ -1314,7 +1314,7 @@ export default function App() {
         setPatients(all)
         setDeletedPatients([])
         setRecentPatients([])
-        setSuccessMessage('🔒 V3-Lesemodus: Patientenliste lokal aus Chiffretext entschlüsselt.')
+        setSuccessMessage(v3PrimaryModeRef.current ? '🚗 V3-Hauptbetrieb: Patientenliste aus verschlüsseltem V3-Bestand geladen.' : '🔒 V3-Lesemodus: Patientenliste lokal aus Chiffretext entschlüsselt.')
       } catch (e) {
         setError(`V3-Lesen fehlgeschlagen: ${e.message}`)
       } finally {
@@ -1357,7 +1357,7 @@ export default function App() {
     setError('')
     setPatientConflict(null)
 
-    if (v3ReadModeRef.current) {
+    if (v3ReadModeRef.current || v3PrimaryModeRef.current) {
       try {
         if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
 
@@ -1376,7 +1376,7 @@ export default function App() {
         setDocEntries([])
         setDocEntryImageCounts({})
         setView('patientDetail')
-        setSuccessMessage('🔒 V3-Lesemodus: Patient, Verordnungen und Befunde lokal entschlüsselt.')
+        setSuccessMessage(v3PrimaryModeRef.current ? '🚗 V3-Hauptbetrieb: Patient aus V3 geladen.' : '🔒 V3-Lesemodus: Patient, Verordnungen und Befunde lokal entschlüsselt.')
       } catch (e) {
         setError(`V3-Patient konnte nicht gelesen werden: ${e.message}`)
       }
@@ -1430,7 +1430,7 @@ export default function App() {
   async function reloadPatientDocuments(patientId = selectedPatient?.id) {
     if (!patientId) return
 
-    if (v3ReadModeRef.current) {
+    if (v3ReadModeRef.current || v3PrimaryModeRef.current) {
       if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
       setPatientDocuments(
         await listV3PatientDocumentsForPatient(patientId, v3PracticeKeyRef.current),
@@ -1446,7 +1446,7 @@ export default function App() {
     setError('')
     setPrescriptionConflict(null)
 
-    if (v3ReadModeRef.current) {
+    if (v3ReadModeRef.current || v3PrimaryModeRef.current) {
       try {
         if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
         const entries = await listV3DocEntriesForPrescription(
@@ -1458,7 +1458,7 @@ export default function App() {
         setDocEntries(entries)
         setDocEntryImageCounts(counts)
         setView('prescriptionDetail')
-        setSuccessMessage('🔒 V3-Lesemodus: Verordnung und Doku lokal entschlüsselt.')
+        setSuccessMessage(v3PrimaryModeRef.current ? '🚗 V3-Hauptbetrieb: Verordnung und Doku aus V3 geladen.' : '🔒 V3-Lesemodus: Verordnung und Doku lokal entschlüsselt.')
       } catch (e) {
         setError(`V3-Verordnung konnte nicht gelesen werden: ${e.message}`)
       }
@@ -1496,10 +1496,10 @@ export default function App() {
     setLibraryCategory(category)
 
     try {
-      if (v3ReadModeRef.current) {
+      if (v3ReadModeRef.current || v3PrimaryModeRef.current) {
         if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
         setLibraryItems(await listV3LibraryItems(category, v3PracticeKeyRef.current))
-        setSuccessMessage('🔒 V3-Lesemodus: Bibliothek lokal entschlüsselt.')
+        setSuccessMessage(v3PrimaryModeRef.current ? '🚗 V3-Hauptbetrieb: Bibliothek aus V3 geladen.' : '🔒 V3-Lesemodus: Bibliothek lokal entschlüsselt.')
       } else {
         setLibraryItems(await listLibraryItems(category))
       }
@@ -3263,7 +3263,7 @@ async function handleImportChangeZip(event) {
   }
 
   function handleLockV3PracticeKey() {
-    if (v3ReadModeRef.current) {
+    if (v3ReadModeRef.current || v3PrimaryModeRef.current) {
       setError('Bitte zuerst den V3-Lesemodus beenden, bevor du den Praxisschlüssel sperrst.')
       return
     }
@@ -3319,7 +3319,7 @@ async function handleImportChangeZip(event) {
       setError('Bitte zuerst den V3-Praxisschlüssel entsperren.')
       return
     }
-    if (v3ReadModeRef.current) {
+    if (v3ReadModeRef.current || v3PrimaryModeRef.current) {
       setError('Bitte zuerst den V3-Lesemodus beenden.')
       return
     }
@@ -5761,7 +5761,7 @@ function openStoredFile(file) {
   			tone="library"
   			onOpen={async () => {
           try {
-            const loaded = v3ReadModeRef.current
+            const loaded = (v3ReadModeRef.current || v3PrimaryModeRef.current)
               ? await loadV3LibraryItemFile(item, v3PracticeKeyRef.current)
               : await loadLibraryItemFile(item)
             openStoredFile(loaded.file)
@@ -6025,6 +6025,16 @@ function openStoredFile(file) {
       return
     }
 
+    if (v3PrimaryModeRef.current) {
+      if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+      const loaded = await loadV3PatientDocumentFile(item, v3PracticeKeyRef.current)
+      setPatientDocumentForm(loaded)
+      setPatientDocumentBase(item)
+      setPatientDocumentConflict(null)
+      setView('patientDocumentEdit')
+      return
+    }
+
     const loaded = await loadPatientDocumentFile(item)
     setPatientDocumentForm(loaded)
     setPatientDocumentBase(item)
@@ -6160,6 +6170,20 @@ function openStoredFile(file) {
                                 setDocImages(images)
                                 setDocImageBaseIds([])
                                 setView('v3DocRead')
+                                return
+                              }
+
+                              if (v3PrimaryModeRef.current) {
+                                if (!v3PracticeKeyRef.current) {
+                                  throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+                                }
+                                const images = await loadV3DocEntryImages(
+                                  value.id,
+                                  v3PracticeKeyRef.current,
+                                )
+                                setDocImages(images)
+                                setDocImageBaseIds(images.map(image => image.id))
+                                setView('docEdit')
                                 return
                               }
 
