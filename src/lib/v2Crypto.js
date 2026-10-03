@@ -398,6 +398,63 @@ export async function decryptBytesWithPassphrase(
   }
 }
 
+export async function encryptPracticeBytesRaw(bytes, practiceKey, context) {
+  if (!practiceKey) throw new Error('Praxisschlüssel ist nicht entsperrt.')
+  if (!context) throw new Error('Für Dateiverschlüsselung fehlt der technische Kontext.')
+
+  const plainBytes = bytes instanceof Uint8Array
+    ? bytes
+    : new Uint8Array(bytes)
+  const iv = randomBytes(12)
+  const encrypted = await globalThis.crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv,
+      additionalData: encoder.encode(context),
+    },
+    practiceKey,
+    plainBytes,
+  )
+
+  return {
+    version: 1,
+    algorithm: 'AES-256-GCM',
+    aad: context,
+    iv: bytesToBase64(iv),
+    data: new Uint8Array(encrypted),
+  }
+}
+
+export async function decryptPracticeBytesRaw(
+  bytes,
+  practiceKey,
+  ivBase64,
+  expectedContext,
+) {
+  if (!practiceKey) throw new Error('Praxisschlüssel ist nicht entsperrt.')
+  if (!ivBase64 || !expectedContext) {
+    throw new Error('Datei-Verschlüsselungsdaten fehlen.')
+  }
+
+  try {
+    const encryptedBytes = bytes instanceof Uint8Array
+      ? bytes
+      : new Uint8Array(bytes)
+    const plain = await globalThis.crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: base64ToBytes(ivBase64),
+        additionalData: encoder.encode(expectedContext),
+      },
+      practiceKey,
+      encryptedBytes,
+    )
+    return new Uint8Array(plain)
+  } catch {
+    throw new Error('V3-Datei konnte nicht entschlüsselt werden.')
+  }
+}
+
 export async function encryptPracticeBytes(bytes, practiceKey, context) {
   if (!practiceKey) throw new Error('Praxisschlüssel ist nicht entsperrt.')
   if (!context) throw new Error('Für Dateiverschlüsselung fehlt der technische Kontext.')
