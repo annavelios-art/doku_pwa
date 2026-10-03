@@ -47,7 +47,8 @@ import {
   getOutboxItems, markOutboxConflict, removeOutboxItem,
 } from './lib/v2OfflineDb'
 import {
-  createPracticeKeyBundle, decryptPracticeBytes, decryptPracticeText,
+  createPracticeKeyBundle, createProductionPracticeKeyBundle,
+  decryptPracticeBytes, decryptPracticeText,
   encryptPracticeBytes, encryptPracticeText, sha256Hex,
   unlockPracticeKey, unlockPracticeKeyWithRecovery, V2_CRYPTO_PARAMETERS,
 } from './lib/v2Crypto'
@@ -64,6 +65,9 @@ import {
 import {
   createEncryptedSupabaseBackup, verifyEncryptedSupabaseBackup,
 } from './lib/v2EncryptedBackup'
+import {
+  createV3Keyring, getV3EncryptedCounts, loadV3Keyring,
+} from './lib/v3EncryptedPractice'
 
 
 const EMPTY_PATIENT_FORM = { id: '', firstName: '', lastName: '', birthDate: '', createdAt: '' }
@@ -625,6 +629,15 @@ export default function App() {
   const [cloudBackupSummary, setCloudBackupSummary] = useState(null)
   const [cloudBackupVerification, setCloudBackupVerification] = useState(null)
   const [cloudBackupVerificationFile, setCloudBackupVerificationFile] = useState('')
+  const [v3Keyring, setV3Keyring] = useState(null)
+  const [v3KeyBusy, setV3KeyBusy] = useState(false)
+  const [v3Passphrase, setV3Passphrase] = useState('')
+  const [v3PassphraseConfirm, setV3PassphraseConfirm] = useState('')
+  const [v3RecoveryCode, setV3RecoveryCode] = useState('')
+  const [v3RecoveryInput, setV3RecoveryInput] = useState('')
+  const [v3RecoveryDownloaded, setV3RecoveryDownloaded] = useState(false)
+  const [v3Unlocked, setV3Unlocked] = useState(false)
+  const [v3Counts, setV3Counts] = useState(null)
   const [printData, setPrintData] = useState(null)
   const docTextareaRef = useRef(null)
   const importInputRef = useRef(null)
@@ -634,6 +647,8 @@ export default function App() {
   const migrationBackupRef = useRef(null)
   const encryptedCloudBackupInputRef = useRef(null)
   const cryptoPracticeKeyRef = useRef(null)
+  const v3CandidateBundleRef = useRef(null)
+  const v3PracticeKeyRef = useRef(null)
   const [userRole, setUserRole] = useState(() => window.localStorage.getItem('pwaUserRole') || USER_ROLES.OWNER)
   const [userName, setUserName] = useState(() => window.localStorage.getItem('pwaUserName') || 'Anna')
   const [lastModifiedAt, setLastModifiedAt] = useState(() => readStoredTimestamp(LAST_MODIFIED_STORAGE_KEY))
@@ -733,6 +748,33 @@ export default function App() {
     if (cloudUser) loadListData()
   }, [cloudUser])
 
+
+  useEffect(() => {
+    let active = true
+
+    if (!cloudUser) {
+      setV3Keyring(null)
+      setV3Counts(null)
+      v3PracticeKeyRef.current = null
+      setV3Unlocked(false)
+      return () => { active = false }
+    }
+
+    Promise.all([
+      loadV3Keyring(cloudUser.id),
+      getV3EncryptedCounts(cloudUser.id),
+    ]).then(([keyring, counts]) => {
+      if (!active) return
+      setV3Keyring(keyring)
+      setV3Counts(counts)
+    }).catch(error => {
+      if (!active) return
+      setError(`V3-Status konnte nicht geladen werden: ${error.message}`)
+    })
+
+    return () => { active = false }
+  }, [cloudUser])
+
   useEffect(() => {
     if (!cloudUser) return undefined
 
@@ -775,6 +817,11 @@ export default function App() {
       setAuthReady(true)
 
       if (event === 'SIGNED_OUT') {
+        v3PracticeKeyRef.current = null
+        v3CandidateBundleRef.current = null
+        setV3Unlocked(false)
+        setV3Keyring(null)
+        setV3Counts(null)
         window.localStorage.removeItem(LOGIN_AT_STORAGE_KEY)
         window.clearTimeout(autoSyncTimerRef.current)
         setAutoSyncPassword('')
@@ -2802,6 +2849,182 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('Lokaler Verschlüsselungstest wurde zurückgesetzt.')
   }
 
+  async function refreshV3BridgeStatus() {
+    if (!cloudUser) return
+    const [keyring, counts] = await Promise.all([
+      loadV3Keyring(cloudUser.id),
+      getV3EncryptedCounts(cloudUser.id),
+    ])
+    setV3Keyring(keyring)
+    setV3Counts(counts)
+  }
+
+  async function handleCreateV3PracticeKey(event) {
+    event.preventDefault()
+    setError('')
+    setSuccessMessage('')
+
+    if (!cloudUser) {
+      setError('Bitte zuerst bei Supabase anmelden.')
+      return
+    }
+    if (v3Keyring) {
+      setError('Der echte V3-Praxisschlüssel ist bereits eingerichtet.')
+      return
+    }
+    if (v3Passphrase !== v3PassphraseConfirm) {
+      setError('Die beiden Verschlüsselungs-Passphrasen stimmen nicht überein.')
+      return
+    }
+
+    setV3KeyBusy(true)
+    try {
+      const bundle = await createProductionPracticeKeyBundle(v3Passphrase)
+      v3CandidateBundleRef.current = bundle
+      setV3RecoveryCode(bundle.recoveryCode)
+      setV3RecoveryDownloaded(false)
+      setV3Unlocked(false)
+      setSuccessMessage(
+        'Echter Praxisschlüssel lokal erzeugt. Noch wurde er nicht aktiviert und noch wurden keine Patientendaten verschlüsselt.',
+      )
+    } catch (e) {
+      setError(`Praxisschlüssel konnte nicht erzeugt werden: ${e.message}`)
+    } finally {
+      setV3KeyBusy(false)
+    }
+  }
+
+  function handleDownloadV3RecoveryKey() {
+    const code = v3RecoveryCode
+    if (!code) {
+      setError('Es gibt noch keinen Wiederherstellungsschlüssel zum Speichern.')
+      return
+    }
+
+    const text = [
+      'PhysioOptima – Wiederherstellungsschlüssel V3',
+      '',
+      'Diesen Schlüssel sicher und getrennt vom Praxisgerät aufbewahren.',
+      'Er ersetzt NICHT die tägliche Verschlüsselungs-Passphrase.',
+      'Wer diesen Schlüssel besitzt, kann zusammen mit der verschlüsselten Schlüsselhülle die Praxisdaten entschlüsseln.',
+      '',
+      `Erstellt: ${new Date().toLocaleString('de-DE')}`,
+      '',
+      code,
+      '',
+    ].join('\n')
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `PhysioOptima_Wiederherstellungsschluessel_V3_${new Date().toISOString().slice(0, 10)}.txt`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    setV3RecoveryDownloaded(true)
+    setSuccessMessage('Wiederherstellungsschlüssel wurde als Datei bereitgestellt. Bitte sicher aufbewahren.')
+  }
+
+  async function handleActivateV3PracticeKey() {
+    setError('')
+    setSuccessMessage('')
+
+    if (!cloudUser) {
+      setError('Bitte zuerst bei Supabase anmelden.')
+      return
+    }
+    if (!v3RecoveryDownloaded) {
+      setError('Bitte zuerst den Wiederherstellungsschlüssel als Datei speichern.')
+      return
+    }
+
+    const bundle = v3CandidateBundleRef.current
+    if (!bundle) {
+      setError('Der lokal erzeugte Praxisschlüssel ist nicht mehr im Arbeitsspeicher. Bitte neu erzeugen.')
+      return
+    }
+
+    setV3KeyBusy(true)
+    try {
+      const saved = await createV3Keyring({
+        userId: cloudUser.id,
+        passwordEnvelope: bundle.passwordEnvelope,
+        recoveryEnvelope: bundle.recoveryEnvelope,
+      })
+
+      setV3Keyring(saved)
+      v3PracticeKeyRef.current = bundle.practiceKey
+      setV3Unlocked(true)
+      v3CandidateBundleRef.current = null
+      setV3Passphrase('')
+      setV3PassphraseConfirm('')
+      await refreshV3BridgeStatus()
+      setSuccessMessage(
+        'V3-Praxisschlüssel aktiviert. Supabase speichert nur die beiden verschlüsselten Schlüsselhüllen – nicht Passphrase und nicht Wiederherstellungscode.',
+      )
+    } catch (e) {
+      setError(`Praxisschlüssel konnte nicht aktiviert werden: ${e.message}`)
+    } finally {
+      setV3KeyBusy(false)
+    }
+  }
+
+  async function handleUnlockV3PracticeKey(event) {
+    event.preventDefault()
+    setError('')
+    setSuccessMessage('')
+    if (!v3Keyring) {
+      setError('Es ist noch kein V3-Praxisschlüssel eingerichtet.')
+      return
+    }
+
+    setV3KeyBusy(true)
+    try {
+      const key = await unlockPracticeKey(v3Passphrase, v3Keyring.password_envelope)
+      v3PracticeKeyRef.current = key
+      setV3Unlocked(true)
+      setV3Passphrase('')
+      setSuccessMessage('Echter V3-Praxisschlüssel entsperrt. Er liegt nur im Arbeitsspeicher dieser geöffneten PWA.')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setV3KeyBusy(false)
+    }
+  }
+
+  async function handleUnlockV3WithRecovery() {
+    setError('')
+    setSuccessMessage('')
+    if (!v3Keyring) {
+      setError('Es ist noch kein V3-Praxisschlüssel eingerichtet.')
+      return
+    }
+
+    setV3KeyBusy(true)
+    try {
+      const key = await unlockPracticeKeyWithRecovery(
+        v3RecoveryInput,
+        v3Keyring.recovery_envelope,
+      )
+      v3PracticeKeyRef.current = key
+      setV3Unlocked(true)
+      setV3RecoveryInput('')
+      setSuccessMessage('V3-Praxisschlüssel mit Wiederherstellungsschlüssel entsperrt.')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setV3KeyBusy(false)
+    }
+  }
+
+  function handleLockV3PracticeKey() {
+    v3PracticeKeyRef.current = null
+    setV3Unlocked(false)
+    setSuccessMessage('V3-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
+  }
+
   function formatByteCount(bytes) {
     const value = Number(bytes || 0)
     if (value < 1024) return `${value} B`
@@ -4022,6 +4245,156 @@ function openStoredFile(file) {
                   )}
                   <p className="muted">Das Verschlüsselungspasswort verlässt dieses Gerät nicht. Für automatische Synchronisation bleibt es nur bis zum Schließen der PWA im Arbeitsspeicher.</p>
                 </div>
+
+                {isOwner && (
+                  <div className="backup-card">
+                    <h3>🌉 V3-Brücke: echter Praxisschlüssel</h3>
+                    <p>
+                      Das ist jetzt nicht mehr das Labor. Dieser Schlüssel soll später die echte verschlüsselte
+                      Parallelstruktur öffnen. Die alten Praxistabellen bleiben unverändert, und die neuen V3-Tabellen
+                      sind derzeit noch leer.
+                    </p>
+
+                    <p className="muted">
+                      Schlüsseltechnik: <strong>{V2_CRYPTO_PARAMETERS.algorithm}</strong> ·
+                      {' '}{V2_CRYPTO_PARAMETERS.kdf} ·
+                      {' '}{V2_CRYPTO_PARAMETERS.iterations.toLocaleString('de-DE')} Ableitungsrunden.
+                      Die tägliche Passphrase und der Wiederherstellungscode werden nicht bei Supabase gespeichert.
+                    </p>
+
+                    {!v3Keyring ? (
+                      <div className="stack-sm">
+                        {!v3RecoveryCode ? (
+                          <form className="stack-sm" onSubmit={handleCreateV3PracticeKey}>
+                            <input
+                              className="field"
+                              type="password"
+                              autoComplete="new-password"
+                              placeholder="Echte Verschlüsselungs-Passphrase (mindestens 16 Zeichen)"
+                              value={v3Passphrase}
+                              onChange={event => setV3Passphrase(event.target.value)}
+                              required
+                            />
+                            <input
+                              className="field"
+                              type="password"
+                              autoComplete="new-password"
+                              placeholder="Passphrase wiederholen"
+                              value={v3PassphraseConfirm}
+                              onChange={event => setV3PassphraseConfirm(event.target.value)}
+                              required
+                            />
+                            <button className="btn btn-green" disabled={v3KeyBusy || !cloudUser}>
+                              {v3KeyBusy ? 'Erzeuge …' : 'Echten Praxisschlüssel erzeugen'}
+                            </button>
+                          </form>
+                        ) : (
+                          <>
+                            <div className="sync-status">
+                              <strong>Wiederherstellungsschlüssel – einmalig sichern</strong>
+                              <span style={{ overflowWrap: 'anywhere' }}>{v3RecoveryCode}</span>
+                              <span>
+                                Diesen Code nicht hier im Chat schicken. Am besten die Datei auf einem getrennten
+                                Datenträger oder an einem anderen sicheren Ort aufbewahren.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleDownloadV3RecoveryKey}
+                              disabled={v3KeyBusy}
+                            >
+                              Wiederherstellungsschlüssel als .txt speichern
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-green"
+                              onClick={handleActivateV3PracticeKey}
+                              disabled={v3KeyBusy || !v3RecoveryDownloaded}
+                            >
+                              {v3KeyBusy ? 'Aktiviere …' : 'Praxisschlüssel aktivieren'}
+                            </button>
+
+                            {!v3RecoveryDownloaded && (
+                              <p className="muted">
+                                Aktivieren wird erst freigegeben, nachdem die Wiederherstellungsdatei gespeichert wurde.
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="stack-sm">
+                        <div className="sync-status sync-status-active">
+                          <strong>V3-Praxisschlüssel eingerichtet</strong>
+                          <span>
+                            Schlüsselversion {v3Keyring.crypto_version} · eingerichtet
+                            {' '}{formatDateTime(v3Keyring.created_at)}
+                          </span>
+                          <span>
+                            Parallelbestand:
+                            {' '}Patienten {v3Counts?.patients ?? 0} ·
+                            {' '}Verordnungen {v3Counts?.prescriptions ?? 0} ·
+                            {' '}Doku {v3Counts?.docEntries ?? 0} ·
+                            {' '}Bilder {v3Counts?.docEntryImages ?? 0} ·
+                            {' '}Befunde {v3Counts?.patientDocuments ?? 0} ·
+                            {' '}Bibliothek {v3Counts?.libraryItems ?? 0}
+                          </span>
+                        </div>
+
+                        {!v3Unlocked ? (
+                          <>
+                            <form className="stack-sm" onSubmit={handleUnlockV3PracticeKey}>
+                              <input
+                                className="field"
+                                type="password"
+                                autoComplete="current-password"
+                                placeholder="Echte Verschlüsselungs-Passphrase"
+                                value={v3Passphrase}
+                                onChange={event => setV3Passphrase(event.target.value)}
+                                required
+                              />
+                              <button className="btn btn-secondary" disabled={v3KeyBusy}>
+                                {v3KeyBusy ? 'Entsperre …' : 'V3-Praxisschlüssel entsperren'}
+                              </button>
+                            </form>
+
+                            <input
+                              className="field"
+                              placeholder="Wiederherstellungsschlüssel nur für Notfall-Test"
+                              value={v3RecoveryInput}
+                              onChange={event => setV3RecoveryInput(event.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleUnlockV3WithRecovery}
+                              disabled={v3KeyBusy || !v3RecoveryInput.trim()}
+                            >
+                              Mit Wiederherstellungsschlüssel entsperren
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <div className="sync-status sync-status-active">
+                              <strong>🔓 V3-Praxisschlüssel entsperrt</strong>
+                              <span>Nur im Arbeitsspeicher dieses Geräts. Noch wurden keine echten Patientendaten kopiert.</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLockV3PracticeKey}
+                            >
+                              V3-Praxisschlüssel sperren
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {isOwner && (
                   <div className="backup-card">
