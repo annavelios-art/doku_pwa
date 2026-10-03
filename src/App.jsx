@@ -5470,19 +5470,21 @@ function openStoredFile(file) {
                       </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPatientForm(EMPTY_PATIENT_FORM)
-                        setSelectedPatient(null)
-                        setPatientConflict(null)
-                        setView('patientEdit')
-                      }}
-                      className="btn btn-primary add-patient-btn"
-                    >
-                      <Plus size={18} />
-                      Patient hinzufügen
-                    </button>
+                    {!v3ReadMode && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPatientForm(EMPTY_PATIENT_FORM)
+                          setSelectedPatient(null)
+                          setPatientConflict(null)
+                          setView('patientEdit')
+                        }}
+                        className="btn btn-primary add-patient-btn"
+                      >
+                        <Plus size={18} />
+                        Patient hinzufügen
+                      </button>
+                    )}
                   </div>
 
                   <div className="stack">
@@ -5588,17 +5590,19 @@ function openStoredFile(file) {
                       <p className="muted">{formatDate(selectedPatient.birthDate)}</p>
                     </div>
 
-                    <button
-                      className="btn btn-ghost"
-                      onClick={() => {
-                        setPatientForm(selectedPatient)
-                        setPatientConflict(null)
-                        setView('patientEdit')
-                      }}
-                    >
-                      <Edit3 size={14} />
-                      Bearbeiten
-                    </button>
+                    {!v3ReadMode && (
+                      <button
+                        className="btn btn-ghost"
+                        onClick={() => {
+                          setPatientForm(selectedPatient)
+                          setPatientConflict(null)
+                          setView('patientEdit')
+                        }}
+                      >
+                        <Edit3 size={14} />
+                        Bearbeiten
+                      </button>
+                    )}
                   </div>
                 </article>
 
@@ -5655,18 +5659,20 @@ function openStoredFile(file) {
  <article className="surface-card">
                   <div className="row-between prescription-header">
                     <h3 className="section-subtitle">Verordnungen</h3>
-                    <button
-                      className="btn btn-green"
-                      onClick={() => {
-                        setPrescriptionForm(EMPTY_PRESCRIPTION_FORM)
-                        setSelectedPrescription(null)
-                        setPrescriptionConflict(null)
-                        setView('prescriptionEdit')
-                      }}
-                    >
-		   <Plus size={16} />
-                      Verordnung
-                    </button>
+                    {!v3ReadMode && (
+                      <button
+                        className="btn btn-green"
+                        onClick={() => {
+                          setPrescriptionForm(EMPTY_PRESCRIPTION_FORM)
+                          setSelectedPrescription(null)
+                          setPrescriptionConflict(null)
+                          setView('prescriptionEdit')
+                        }}
+                      >
+                        <Plus size={16} />
+                        Verordnung
+                      </button>
+                    )}
                   </div>
 
                   <div className="prescription-list">
@@ -5710,35 +5716,39 @@ function openStoredFile(file) {
                       >
                         <Printer size={14} />
                       </button>
-<button
-  type="button"
-  className="btn btn-ghost"
-  onClick={() => {
-    setPrescriptionForm(selectedPrescription)
-    setPrescriptionConflict(null)
-    setView('prescriptionEdit')
-  }}
->
-  <Edit3 size={14} />
-  Bearbeiten
-</button>
+{!v3ReadMode && (
+  <button
+    type="button"
+    className="btn btn-ghost"
+    onClick={() => {
+      setPrescriptionForm(selectedPrescription)
+      setPrescriptionConflict(null)
+      setView('prescriptionEdit')
+    }}
+  >
+    <Edit3 size={14} />
+    Bearbeiten
+  </button>
+)}
                     </div>
                   </article>
 
-                  <button
-                    className="btn btn-green full"
-                    onClick={() => {
-                      setDocForm(EMPTY_DOC_FORM)
-                      setDocBaseEntry(null)
-                      setDocConflict(null)
-                      setDocImages([])
-                      setDocImageBaseIds([])
-                      setView('docEdit')
-                    }}
-                  >
-                    <Plus size={16} />
-                    Doku
-                  </button>
+                  {!v3ReadMode && (
+                    <button
+                      className="btn btn-green full"
+                      onClick={() => {
+                        setDocForm(EMPTY_DOC_FORM)
+                        setDocBaseEntry(null)
+                        setDocConflict(null)
+                        setDocImages([])
+                        setDocImageBaseIds([])
+                        setView('docEdit')
+                      }}
+                    >
+                      <Plus size={16} />
+                      Doku
+                    </button>
+                  )}
 
                   <div className="stack">
                     {docEntries.length === 0 ? (
