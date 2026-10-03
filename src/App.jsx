@@ -3263,7 +3263,7 @@ async function handleImportChangeZip(event) {
   }
 
   function handleLockV3PracticeKey() {
-    if (v3ReadModeRef.current || v3PrimaryModeRef.current) {
+    if (v3ReadModeRef.current) {
       setError('Bitte zuerst den V3-Lesemodus beenden, bevor du den Praxisschlüssel sperrst.')
       return
     }
@@ -3346,6 +3346,81 @@ async function handleImportChangeZip(event) {
     setV3MirrorMode(false)
     setV3MirrorLastMessage('')
     setSuccessMessage('V3-Schreibspiegel beendet.')
+  }
+
+  async function handleStartV3PrimaryMode() {
+    setError('')
+    setSuccessMessage('')
+
+    if (!v3PracticeKeyRef.current || !v3Unlocked) {
+      setError('Bitte zuerst den V3-Praxisschlüssel entsperren.')
+      return
+    }
+    if (v3ReadModeRef.current || v3MirrorModeRef.current) {
+      setError('Bitte zuerst V3-Lesemodus bzw. Schreibspiegel beenden.')
+      return
+    }
+    if (!navigator.onLine) {
+      setError('Die erste V3-Hauptbetrieb-Testfahrt startet absichtlich nur online.')
+      return
+    }
+    if (outboxCount > 0 || v3MirrorOutboxCount > 0) {
+      setError(
+        `Bitte zuerst alle wartenden Offline-Änderungen synchronisieren (alt: ${outboxCount}, V3-Spiegel: ${v3MirrorOutboxCount}).`,
+      )
+      return
+    }
+
+    const confirmed = window.confirm(
+      'V3-Hauptbetrieb – Testfahrt starten?\n\n' +
+      'Ab jetzt liest UND schreibt diese Test-PWA direkt in die verschlüsselten V3-Tabellen. ' +
+      'Die alten Klartexttabellen bleiben als eingefrorenes Sicherheitsnetz bestehen und werden NICHT mehr mit aktualisiert.\n\n' +
+      'Wichtig: Die normale Produktions-PWA darf während dieser Testfahrt nicht parallel für echte Änderungen benutzt werden.'
+    )
+    if (!confirmed) return
+
+    v3PrimaryModeRef.current = true
+    setV3PrimaryMode(true)
+    setSelectedPatient(null)
+    setSelectedPrescription(null)
+    setPrescriptions([])
+    setPatientDocuments([])
+    setDocEntries([])
+    setDocEntryImageCounts({})
+    setDocImages([])
+    setLibraryItems([])
+    setNav('patients')
+    setView('list')
+
+    await loadListData()
+    setSuccessMessage(
+      '🚗 V3-Hauptbetrieb – Testfahrt aktiv. Lesen und Schreiben gehen direkt über verschlüsseltes V3; alte Klartexttabellen bleiben unverändert.',
+    )
+  }
+
+  async function handleStopV3PrimaryMode() {
+    const confirmed = window.confirm(
+      'V3-Hauptbetrieb-Testfahrt beenden?\n\n' +
+      'Falls du während der Testfahrt etwas gespeichert hast, können die alten Klartexttabellen absichtlich älter sein als V3.'
+    )
+    if (!confirmed) return
+
+    v3PrimaryModeRef.current = false
+    setV3PrimaryMode(false)
+    setSelectedPatient(null)
+    setSelectedPrescription(null)
+    setPrescriptions([])
+    setPatientDocuments([])
+    setDocEntries([])
+    setDocEntryImageCounts({})
+    setDocImages([])
+    setLibraryItems([])
+    setNav('patients')
+    setView('list')
+    await loadListData(true)
+    setSuccessMessage(
+      'V3-Hauptbetrieb-Testfahrt beendet. Achtung: Die alte Ansicht ist nur noch der eingefrorene Sicherheitsstand und kann von V3 abweichen.',
+    )
   }
 
   async function handleEnterV3ReadMode() {
@@ -4674,6 +4749,27 @@ function openStoredFile(file) {
               </div>
             )}
 
+            {v3PrimaryMode && (
+              <div className="sync-status sync-status-active">
+                <strong>🚗 V3-Hauptbetrieb – Testfahrt aktiv</strong>
+                <span>
+                  Diese Test-PWA liest und schreibt direkt gegen die verschlüsselten V3-Tabellen.
+                  Die alten Klartexttabellen werden nicht mit aktualisiert.
+                </span>
+                <span>
+                  Für diese erste Testfahrt ist Speichern absichtlich nur online freigegeben.
+                  Die normale Produktions-PWA bitte nicht parallel für Änderungen benutzen.
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={handleStopV3PrimaryMode}
+                >
+                  V3-Hauptbetrieb-Testfahrt beenden
+                </button>
+              </div>
+            )}
+
             {v3MirrorMode && (
               <div className="sync-status sync-status-active">
                 <strong>🪞 V3-Schreibspiegel aktiv</strong>
@@ -5025,7 +5121,7 @@ function openStoredFile(file) {
                               </div>
                             )}
 
-                            {!v3ReadMode && !v3MirrorMode && (v3Counts?.patients ?? 0) > 0 && (
+                            {!v3ReadMode && !v3MirrorMode && !v3PrimaryMode && (v3Counts?.patients ?? 0) > 0 && (
                               <>
                                 <button
                                   type="button"
@@ -5044,6 +5140,15 @@ function openStoredFile(file) {
                                 >
                                   🪞 V3-Schreibspiegel starten
                                 </button>
+
+                                <button
+                                  type="button"
+                                  className="btn btn-green"
+                                  onClick={handleStartV3PrimaryMode}
+                                  disabled={v3BridgeBusy}
+                                >
+                                  🚗 V3-Hauptbetrieb – Testfahrt starten
+                                </button>
                               </>
                             )}
 
@@ -5055,6 +5160,17 @@ function openStoredFile(file) {
                                 disabled={v3BridgeBusy}
                               >
                                 V3-Schreibspiegel beenden
+                              </button>
+                            )}
+
+                            {v3PrimaryMode && (
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={handleStopV3PrimaryMode}
+                                disabled={v3BridgeBusy}
+                              >
+                                V3-Hauptbetrieb-Testfahrt beenden
                               </button>
                             )}
 
