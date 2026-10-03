@@ -652,6 +652,7 @@ export default function App() {
   const [cloudBackupVerification, setCloudBackupVerification] = useState(null)
   const [cloudBackupVerificationFile, setCloudBackupVerificationFile] = useState('')
   const [v3Keyring, setV3Keyring] = useState(null)
+  const [v3KeyringReady, setV3KeyringReady] = useState(false)
   const [v3KeyBusy, setV3KeyBusy] = useState(false)
   const [v3Passphrase, setV3Passphrase] = useState('')
   const [v3PassphraseConfirm, setV3PassphraseConfirm] = useState('')
@@ -780,7 +781,9 @@ export default function App() {
   }, [selectedPatient, patientForm, selectedPrescription, prescriptionForm, docForm, docBaseEntry, docImages, docImageBaseIds, patientDocumentForm, patientDocumentBase, libraryCategory, view])
 
   useEffect(() => {
-    if (cloudUser) loadListData()
+    // Im V3-Hauptbetrieb wird vor dem Entsperren absichtlich keine
+    // Patientenliste geladen. So blitzt kein alter lokaler/Klartext-Stand auf.
+    if (!cloudUser) return
   }, [cloudUser])
 
 
@@ -789,6 +792,7 @@ export default function App() {
 
     if (!cloudUser) {
       setV3Keyring(null)
+      setV3KeyringReady(false)
       setV3Counts(null)
       v3PracticeKeyRef.current = null
       v3ReadModeRef.current = false
@@ -801,6 +805,7 @@ export default function App() {
       return () => { active = false }
     }
 
+    setV3KeyringReady(false)
     Promise.all([
       loadV3Keyring(cloudUser.id),
       getV3EncryptedCounts(cloudUser.id),
@@ -808,8 +813,10 @@ export default function App() {
       if (!active) return
       setV3Keyring(keyring)
       setV3Counts(counts)
+      setV3KeyringReady(true)
     }).catch(error => {
       if (!active) return
+      setV3KeyringReady(true)
       setError(`V3-Status konnte nicht geladen werden: ${error.message}`)
     })
 
@@ -819,20 +826,11 @@ export default function App() {
   useEffect(() => {
     if (!cloudUser) return undefined
 
-    refreshOutboxCount()
-    refreshV3MirrorOutboxCount()
-    if (navigator.onLine) {
-      void flushOutbox()
-      void flushV3MirrorOutbox()
-    }
-
-    const handleOnline = () => {
-      void flushOutbox()
-      window.setTimeout(() => void flushV3MirrorOutbox(), 250)
-    }
-
-    window.addEventListener('online', handleOnline)
-    return () => window.removeEventListener('online', handleOnline)
+    // Alt-Outbox nur noch anzeigen, nicht mehr automatisch in die
+    // Klartexttabellen schreiben. Vor dem Produktionswechsel muss sie leer sein.
+    void refreshOutboxCount()
+    void refreshV3MirrorOutboxCount()
+    return undefined
   }, [cloudUser])
 
   useEffect(() => {
@@ -873,6 +871,7 @@ export default function App() {
         setV3PrimaryMode(false)
         setV3Unlocked(false)
         setV3Keyring(null)
+        setV3KeyringReady(false)
         setV3Counts(null)
         window.localStorage.removeItem(LOGIN_AT_STORAGE_KEY)
         window.clearTimeout(autoSyncTimerRef.current)
@@ -3262,6 +3261,87 @@ async function handleImportChangeZip(event) {
     }
   }
 
+  async function handleOpenEncryptedPractice(event) {
+    event.preventDefault()
+    setError('')
+    setSuccessMessage('')
+
+    if (!v3Keyring) {
+      setError('Für dieses Konto ist noch kein V3-Praxisschlüssel eingerichtet.')
+      return
+    }
+    if (!v3Passphrase) {
+      setError('Bitte das Verschlüsselungspasswort eingeben.')
+      return
+    }
+
+    setV3KeyBusy(true)
+    try {
+      const key = await unlockPracticeKey(v3Passphrase, v3Keyring.password_envelope)
+      v3PracticeKeyRef.current = key
+      v3PrimaryModeRef.current = true
+      setV3Unlocked(true)
+      setV3PrimaryMode(true)
+      setV3Passphrase('')
+      setSelectedPatient(null)
+      setSelectedPrescription(null)
+      setPrescriptions([])
+      setPatientDocuments([])
+      setDocEntries([])
+      setDocEntryImageCounts({})
+      setDocImages([])
+      setLibraryItems([])
+      setNav('patients')
+      setView('list')
+      await loadListData()
+      setSuccessMessage('🔓 Verschlüsselte Praxis geöffnet.')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setV3KeyBusy(false)
+    }
+  }
+
+  async function handleOpenEncryptedPracticeWithRecovery(event) {
+    event.preventDefault()
+    setError('')
+    setSuccessMessage('')
+
+    if (!v3Keyring) {
+      setError('Für dieses Konto ist noch kein V3-Praxisschlüssel eingerichtet.')
+      return
+    }
+
+    setV3KeyBusy(true)
+    try {
+      const key = await unlockPracticeKeyWithRecovery(
+        v3RecoveryInput,
+        v3Keyring.recovery_envelope,
+      )
+      v3PracticeKeyRef.current = key
+      v3PrimaryModeRef.current = true
+      setV3Unlocked(true)
+      setV3PrimaryMode(true)
+      setV3RecoveryInput('')
+      setSelectedPatient(null)
+      setSelectedPrescription(null)
+      setPrescriptions([])
+      setPatientDocuments([])
+      setDocEntries([])
+      setDocEntryImageCounts({})
+      setDocImages([])
+      setLibraryItems([])
+      setNav('patients')
+      setView('list')
+      await loadListData()
+      setSuccessMessage('🔓 Verschlüsselte Praxis mit Wiederherstellungsschlüssel geöffnet.')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setV3KeyBusy(false)
+    }
+  }
+
   function handleLockV3PracticeKey() {
     if (v3ReadModeRef.current) {
       setError('Bitte zuerst den V3-Lesemodus beenden, bevor du den Praxisschlüssel sperrst.')
@@ -4881,6 +4961,99 @@ function openStoredFile(file) {
               <button className="btn btn-primary" disabled={cloudBusy}>{cloudBusy ? 'Anmeldung ...' : 'Anmelden'}</button>
             </form>
             {error && <p className="error-message">{error}</p>}
+          </section>
+        </main>
+      </div>
+    )
+  }
+
+  if (!v3KeyringReady) {
+    return (
+      <div className="app-shell">
+        <main className="app-main">
+          <section className="surface-card stack" style={{ maxWidth: 520, margin: '48px auto' }}>
+            <div className="sidebar-logo-wrap">
+              <img src="/logo_kl.gif" alt="Praxis Logo" className="sidebar-logo" />
+            </div>
+            <h2 className="section-title">Behandlungsdokumentation</h2>
+            <p className="muted">Verschlüsselter Praxisschlüssel wird geladen …</p>
+          </section>
+        </main>
+      </div>
+    )
+  }
+
+  if (!v3Keyring) {
+    return (
+      <div className="app-shell">
+        <main className="app-main">
+          <section className="surface-card stack" style={{ maxWidth: 520, margin: '48px auto' }}>
+            <div className="sidebar-logo-wrap">
+              <img src="/logo_kl.gif" alt="Praxis Logo" className="sidebar-logo" />
+            </div>
+            <h2 className="section-title">Verschlüsselte Praxis nicht eingerichtet</h2>
+            <p className="msg msg-error">
+              Für dieses Konto wurde kein V3-Praxisschlüssel gefunden. Die Patientenoberfläche bleibt gesperrt.
+            </p>
+          </section>
+        </main>
+      </div>
+    )
+  }
+
+  if (!v3Unlocked || !v3PrimaryMode) {
+    return (
+      <div className="app-shell">
+        <main className="app-main">
+          <section className="surface-card stack" style={{ maxWidth: 520, margin: '48px auto' }}>
+            <div className="sidebar-logo-wrap">
+              <img src="/logo_kl.gif" alt="Praxis Logo" className="sidebar-logo" />
+            </div>
+
+            <h2 className="section-title">Praxisschlüssel entsperren</h2>
+            <p className="muted">
+              Die Cloud-Anmeldung ist gültig. Jetzt wird nur noch der lokale Schlüssel für die
+              verschlüsselte Behandlungsdokumentation benötigt.
+            </p>
+
+            <form className="stack" onSubmit={handleOpenEncryptedPractice}>
+              <input
+                className="field"
+                type="password"
+                autoComplete="current-password"
+                placeholder="Verschlüsselungspasswort"
+                value={v3Passphrase}
+                onChange={event => setV3Passphrase(event.target.value)}
+                required
+                autoFocus
+              />
+              <button className="btn btn-primary" disabled={v3KeyBusy}>
+                {v3KeyBusy ? 'Entsperre …' : 'Praxis öffnen'}
+              </button>
+            </form>
+
+            <details>
+              <summary className="muted">Wiederherstellungsschlüssel verwenden</summary>
+              <form className="stack" onSubmit={handleOpenEncryptedPracticeWithRecovery} style={{ marginTop: 12 }}>
+                <input
+                  className="field"
+                  placeholder="Wiederherstellungsschlüssel"
+                  value={v3RecoveryInput}
+                  onChange={event => setV3RecoveryInput(event.target.value)}
+                  required
+                />
+                <button className="btn btn-ghost" disabled={v3KeyBusy}>
+                  Mit Wiederherstellungsschlüssel öffnen
+                </button>
+              </form>
+            </details>
+
+            <p className="muted">
+              Das Verschlüsselungspasswort wird nicht gespeichert. Der entsperrte Praxisschlüssel
+              bleibt nur im Arbeitsspeicher, solange diese PWA geöffnet ist.
+            </p>
+
+            {error && <p className="msg msg-error">{error}</p>}
           </section>
         </main>
       </div>
