@@ -73,7 +73,7 @@ import {
 } from './lib/v3ParallelMigration'
 import {
   getV3DocEntryImageCountMap, getV3Patient, listV3ActivePatients,
-  listV3DocEntriesForPrescription, listV3LibraryItems,
+  listV3DeletedPatients, listV3DocEntriesForPrescription, listV3LibraryItems,
   listV3PatientDocumentsForPatient, listV3PrescriptionsForPatient,
   loadV3DocEntryImages, loadV3LibraryItemFile, loadV3PatientDocumentFile,
 } from './lib/v3ReadOnly'
@@ -87,8 +87,9 @@ import {
   inspectV3MirrorOutboxRaw, removeV3MirrorOutboxItem,
 } from './lib/v3MirrorOfflineDb'
 import {
-  saveV3DocEntry, saveV3LibraryItem, saveV3Patient, saveV3PatientDocument,
-  saveV3Prescription, syncV3DocEntryImages,
+  restoreV3Patient, saveV3DocEntry, saveV3LibraryItem, saveV3Patient,
+  saveV3PatientDocument, saveV3Prescription, softDeleteV3Patient,
+  syncV3DocEntryImages,
 } from './lib/v3PrimaryStore'
 
 
@@ -728,7 +729,7 @@ export default function App() {
   const libraryCategoryRef = useRef('nachbehandlung')
   const isOwner = userRole === USER_ROLES.OWNER
   const isStaff = userRole === USER_ROLES.STAFF
-  const canManageTrash = isOwner && Boolean(cloudUser) && !v3ReadMode && !v3PrimaryMode
+  const canManageTrash = isOwner && Boolean(cloudUser) && !v3ReadMode
 
   const filteredPatients = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -1353,9 +1354,12 @@ export default function App() {
         if (!v3PracticeKeyRef.current) {
           throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
         }
-        const all = await listV3ActivePatients(v3PracticeKeyRef.current)
+        const [all, deleted] = await Promise.all([
+          listV3ActivePatients(v3PracticeKeyRef.current),
+          listV3DeletedPatients(v3PracticeKeyRef.current),
+        ])
         setPatients(all)
-        setDeletedPatients([])
+        setDeletedPatients(deleted)
         setRecentPatients([])
         setSuccessMessage(v3PrimaryModeRef.current ? '🚗 V3-Hauptbetrieb: Patientenliste aus verschlüsseltem V3-Bestand geladen.' : '🔒 V3-Lesemodus: Patientenliste lokal aus Chiffretext entschlüsselt.')
       } catch (e) {
@@ -4107,6 +4111,33 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('')
 
     try {
+      if (v3PrimaryModeRef.current) {
+        if (!navigator.onLine) throw new Error('Der V3-Papierkorb braucht in dieser Stufe Internet.')
+        if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+
+        const { conflict } = await softDeleteV3Patient(
+          selectedPatient.id,
+          selectedPatient.updatedAt || '',
+          v3PracticeKeyRef.current,
+        )
+        if (conflict) {
+          setPatientConflict(conflict)
+          throw new Error('V3-Konflikt: Der Patient wurde inzwischen auf einem anderen Gerät geändert.')
+        }
+
+        await loadListData()
+        setSelectedPatient(null)
+        setSelectedPrescription(null)
+        setPrescriptions([])
+        setPatientDocuments([])
+        setDocEntries([])
+        setDocEntryImageCounts({})
+        setNav('patients')
+        setView('list')
+        setSuccessMessage(`${expectedName} wurde im verschlüsselten V3-Bestand in den Papierkorb verschoben.`)
+        return
+      }
+
       ensureV3MirrorWriteReady()
       const { conflict } = await softDeletePatientInSupabase(selectedPatient.id, selectedPatient.updatedAt || '')
       if (conflict) {
@@ -4152,6 +4183,16 @@ async function handleImportChangeZip(event) {
     setSuccessMessage('')
 
     try {
+      if (v3PrimaryModeRef.current) {
+        if (!navigator.onLine) throw new Error('V3-Wiederherstellen braucht in dieser Stufe Internet.')
+        if (!v3PracticeKeyRef.current) throw new Error('V3-Praxisschlüssel ist nicht entsperrt.')
+
+        await restoreV3Patient(patient.id, v3PracticeKeyRef.current)
+        await loadListData()
+        setSuccessMessage(`${patientLabel(patient)} wurde im verschlüsselten V3-Bestand wiederhergestellt.`)
+        return
+      }
+
       ensureV3MirrorWriteReady()
       await restorePatientInSupabase(patient.id)
       await loadListData()
