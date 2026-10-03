@@ -1535,8 +1535,8 @@ export default function App() {
     const forbiddenValues = kind === 'patient'
       ? [record.firstName, record.lastName, record.birthDate]
       : kind === 'prescription'
-        ? [record.issueDate, String(record.remedy || '').length >= 4 ? record.remedy : '']
-        : [record.entryDate, record.text]
+        ? [String(record.remedy || '').length >= 4 ? record.remedy : '']
+        : [record.text]
 
     const audit = await inspectV3MirrorOutboxRaw(forbiddenValues)
     setV3MirrorOfflineAudit(audit)
@@ -1719,6 +1719,7 @@ export default function App() {
       }
 
       await refreshOutboxCount()
+      await flushV3MirrorOutbox()
 
       if (synced > 0 && conflicts === 0) {
         setError('')
@@ -3209,6 +3210,10 @@ async function handleImportChangeZip(event) {
       v3PracticeKeyRef.current = key
       setV3Unlocked(true)
       setV3Passphrase('')
+      await refreshV3MirrorOutboxCount()
+      if (navigator.onLine) {
+        await flushV3MirrorOutbox()
+      }
       setSuccessMessage('Echter V3-Praxisschlüssel entsperrt. Er liegt nur im Arbeitsspeicher dieser geöffneten PWA.')
     } catch (e) {
       setError(e.message)
@@ -3234,6 +3239,10 @@ async function handleImportChangeZip(event) {
       v3PracticeKeyRef.current = key
       setV3Unlocked(true)
       setV3RecoveryInput('')
+      await refreshV3MirrorOutboxCount()
+      if (navigator.onLine) {
+        await flushV3MirrorOutbox()
+      }
       setSuccessMessage('V3-Praxisschlüssel mit Wiederherstellungsschlüssel entsperrt.')
     } catch (e) {
       setError(e.message)
@@ -3341,9 +3350,9 @@ async function handleImportChangeZip(event) {
       setError('Der verschlüsselte V3-Parallelbestand ist noch leer.')
       return
     }
-    if (outboxCount > 0) {
+    if (outboxCount > 0 || v3MirrorOutboxCount > 0) {
       setError(
-        `Bitte zuerst die ${outboxCount} wartenden Offline-Änderung(en) der bisherigen Praxis synchronisieren.`,
+        `Bitte zuerst die wartenden Offline-Änderungen synchronisieren (alt: ${outboxCount}, V3-Spiegel: ${v3MirrorOutboxCount}).`,
       )
       return
     }
