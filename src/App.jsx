@@ -5847,11 +5847,13 @@ function openStoredFile(file) {
                               type="button"
                               className="btn btn-green"
                               onClick={handleBuildV3ParallelBridge}
-                              disabled={v3BridgeBusy}
+                              disabled={v3BridgeBusy || v3PrimaryMode}
                             >
-                              {v3BridgeBusy
-                                ? 'V3-Brücke wird gebaut …'
-                                : 'V3-Parallelbestand bauen / aktualisieren + vollständig prüfen'}
+                              {v3PrimaryMode
+                                ? 'Produktionsbetrieb: Brücken-Neuaufbau gesperrt'
+                                : v3BridgeBusy
+                                  ? 'V3-Brücke wird gebaut …'
+                                  : 'V3-Parallelbestand bauen / aktualisieren + vollständig prüfen'}
                             </button>
 
                             {v3BridgeProgress && (
