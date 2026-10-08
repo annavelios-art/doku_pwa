@@ -8,6 +8,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
 workbox: {
+  globPatterns: ['**/*.{js,css,html,ico,png,svg,gif}'],
   maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
 },
       manifest: {
