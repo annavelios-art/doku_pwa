@@ -1,3 +1,5 @@
+import BefundDrawing from './components/BefundDrawing'
+import { readDrawing } from './lib/befundDrawing'
 import { rememberPracticeKey, restorePracticeKey, forgetPracticeKey } from './lib/practiceKeySession'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -608,6 +610,7 @@ export default function App() {
   const [docEntries, setDocEntries] = useState([])
   const [docEntryImageCounts, setDocEntryImageCounts] = useState({})
   const [docImages, setDocImages] = useState([])
+  const [befundDrawingOpen, setBefundDrawingOpen] = useState(false)
   const [patientDocuments, setPatientDocuments] = useState([])
   const [libraryCategory, setLibraryCategory] = useState('nachbehandlung')
   const [libraryItems, setLibraryItems] = useState([])
@@ -3585,6 +3588,7 @@ async function handleImportChangeZip(event) {
     setV3Unlocked(false)
     setV3Passphrase('')
     setV3RecoveryInput('')
+    setBefundDrawingOpen(false)
     setV3BridgeVerification(null)
     setPatients([])
     setDeletedPatients([])
@@ -5106,6 +5110,15 @@ async function handleImportChangeZip(event) {
     }
   }
 
+  function openBefundDrawing() {
+    try {
+      const existing = readDrawing(patientDocumentForm.file)
+      if (patientDocumentForm.file && !existing &&
+          !window.confirm('Die vorhandene Datei durch einen neuen Zeichenbefund ersetzen? Erst beim Speichern wird die Änderung übernommen.')) return
+      setBefundDrawingOpen(true)
+    } catch (e) { setError(e.message) }
+  }
+
   async function handleSavePatientDocument(event) {
     event.preventDefault()
     if (!selectedPatient) return setError('Kein Patient ausgewählt.')
@@ -5204,7 +5217,9 @@ async function handleImportChangeZip(event) {
   async function handleLoadPatientDocumentConflict() {
     if (!patientDocumentConflict) return
     try {
-      const loaded = await loadPatientDocumentFile(patientDocumentConflict)
+      const loaded = v3PrimaryModeRef.current
+        ? await loadV3PatientDocumentFile(patientDocumentConflict, v3PracticeKeyRef.current)
+        : await loadPatientDocumentFile(patientDocumentConflict)
       setPatientDocumentForm(loaded)
       setPatientDocumentBase(patientDocumentConflict)
       setPatientDocumentConflict(null)
@@ -7335,6 +7350,28 @@ function openStoredFile(file) {
     }))
   }
 />
+
+                  <button type="button" className="btn btn-primary" onClick={openBefundDrawing}>
+                    {patientDocumentForm.file?.fileName === 'Zeichenbefund.png' ? 'Zeichnung bearbeiten' : 'Befund zeichnen'}
+                  </button>
+                  {patientDocumentBase && patientDocumentForm.file?.fileName === 'Zeichenbefund.png' && (
+                    <button type="button" className="btn btn-ghost" onClick={() => {
+                      setPatientDocumentForm(prev => ({ ...prev, id: '', documentDate: todayIso(), file: { ...prev.file, storagePath: '', cryptoMeta: null } }))
+                      setPatientDocumentBase(null)
+                      setPatientDocumentConflict(null)
+                      setSuccessMessage('Kopie vorbereitet. Der bisherige Befund bleibt erhalten. Bitte bearbeiten und als neuen Befund speichern.')
+                    }}>Als neuen Befund übernehmen</button>
+                  )}
+                  {befundDrawingOpen && (
+                    <BefundDrawing
+                      file={patientDocumentForm.file}
+                      onClose={() => setBefundDrawingOpen(false)}
+                      onApply={file => {
+                        setPatientDocumentForm(prev => ({ ...prev, title: prev.title || 'Haltungsbefund', file }))
+                        setBefundDrawingOpen(false)
+                      }}
+                    />
+                  )}
 
                   <label className="upload-card">
                     <span>

@@ -1,0 +1,17 @@
+Korrektur vom 13.10.2026: Zeichenbefund + 24-Stunden-Freigabe
+
+Diese ZIP ersetzt die beiden vorherigen Änderungs-ZIPs vom 13.10.
+Alle enthaltenen Code- und Vorlagendateien an den angegebenen Pfaden im Projekt ersetzen bzw. hinzufügen:
+src/App.jsx
+src/lib/practiceKeySession.js
+src/components/BefundDrawing.jsx
+src/components/BefundDrawing.css
+src/lib/befundDrawing.js
+src/assets/befund-vorlage.gif
+vite.config.js
+
+Die Zeichenfunktion aus der Version vom 08.10. ist wieder eingebunden: Befund zeichnen, Zeichnung bearbeiten, als neuen Befund übernehmen. Die 24-Stunden-Freigabe und Praxis sperren bleiben enthalten. Das große grüne Testfahrt-Feld bleibt entfernt. Die PWA-Vorlage wird wieder mit für Offline-Betrieb zwischengespeichert.
+
+Die bestehende Datenbank und gespeicherte Befunde werden nicht geändert. Nach Übernahme und Start mit einem Testbefund prüfen: zeichnen → Zeichnung übernehmen → Speichern → erneut öffnen → Zeichnung bearbeiten. Zur Verlaufskontrolle kann Als neuen Befund übernehmen genutzt werden.
+
+Prüfungen: Produktionsbuild erfolgreich, ESLint für Zeichenkomponente, PNG-Helfer und Schlüssel-Sitzung erfolgreich, PNG-Zeichendaten-Rundlauf und Erkennung beschädigter Zeichenmetadaten erfolgreich. 24-Stunden-Schlüsseltests weiterhin bestanden. Vollständiger Browser- und angemeldeter Speichertest hier nicht ausgeführt. Die bereits im Ausgangsprojekt vorhandenen allgemeinen Lint-Fehler bleiben bestehen.
