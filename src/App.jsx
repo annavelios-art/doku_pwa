@@ -1,5 +1,4 @@
-import BefundDrawing from './components/BefundDrawing'
-import { readDrawing } from './lib/befundDrawing'
+import { rememberPracticeKey, restorePracticeKey, forgetPracticeKey } from './lib/practiceKeySession'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Bell, CircleHelp, CloudUpload, Dumbbell, Edit3, FileText, Home, Library,
@@ -135,9 +134,6 @@ const USER_ROLE_LABELS = {
   [USER_ROLES.OWNER]: 'Praxisleitung',
   [USER_ROLES.STAFF]: 'Mitarbeiter',
 }
-
-const EXERCISE_PWA_URL = 'https://ubungen-physio.anna-velios.workers.dev/'
-const EXERCISE_QR_PATH = 'M4 4h7v1h-7zM12 4h3v1h-3zM16 4h1v1h-1zM20 4h1v1h-1zM22 4h4v1h-4zM27 4h1v1h-1zM30 4h7v1h-7zM4 5h1v1h-1zM10 5h1v1h-1zM12 5h2v1h-2zM16 5h1v1h-1zM18 5h1v1h-1zM21 5h1v1h-1zM26 5h3v1h-3zM30 5h1v1h-1zM36 5h1v1h-1zM4 6h1v1h-1zM6 6h3v1h-3zM10 6h1v1h-1zM14 6h1v1h-1zM16 6h4v1h-4zM22 6h2v1h-2zM27 6h2v1h-2zM30 6h1v1h-1zM32 6h3v1h-3zM36 6h1v1h-1zM4 7h1v1h-1zM6 7h3v1h-3zM10 7h1v1h-1zM12 7h1v1h-1zM14 7h1v1h-1zM16 7h1v1h-1zM19 7h1v1h-1zM22 7h2v1h-2zM26 7h1v1h-1zM28 7h1v1h-1zM30 7h1v1h-1zM32 7h3v1h-3zM36 7h1v1h-1zM4 8h1v1h-1zM6 8h3v1h-3zM10 8h1v1h-1zM13 8h1v1h-1zM15 8h1v1h-1zM20 8h1v1h-1zM22 8h1v1h-1zM26 8h1v1h-1zM28 8h1v1h-1zM30 8h1v1h-1zM32 8h3v1h-3zM36 8h1v1h-1zM4 9h1v1h-1zM10 9h1v1h-1zM15 9h8v1h-8zM30 9h1v1h-1zM36 9h1v1h-1zM4 10h7v1h-7zM12 10h1v1h-1zM14 10h1v1h-1zM16 10h1v1h-1zM18 10h1v1h-1zM20 10h1v1h-1zM22 10h1v1h-1zM24 10h1v1h-1zM26 10h1v1h-1zM28 10h1v1h-1zM30 10h7v1h-7zM12 11h1v1h-1zM15 11h1v1h-1zM19 11h5v1h-5zM26 11h3v1h-3zM4 12h1v1h-1zM6 12h2v1h-2zM9 12h3v1h-3zM14 12h2v1h-2zM18 12h2v1h-2zM21 12h1v1h-1zM25 12h1v1h-1zM30 12h1v1h-1zM33 12h1v1h-1zM35 12h2v1h-2zM4 13h6v1h-6zM14 13h1v1h-1zM17 13h1v1h-1zM20 13h6v1h-6zM27 13h1v1h-1zM30 13h2v1h-2zM33 13h4v1h-4zM4 14h1v1h-1zM6 14h1v1h-1zM9 14h2v1h-2zM12 14h2v1h-2zM16 14h2v1h-2zM20 14h1v1h-1zM22 14h1v1h-1zM25 14h3v1h-3zM31 14h3v1h-3zM35 14h2v1h-2zM4 15h2v1h-2zM13 15h1v1h-1zM15 15h2v1h-2zM21 15h1v1h-1zM26 15h3v1h-3zM30 15h2v1h-2zM33 15h1v1h-1zM36 15h1v1h-1zM4 16h1v1h-1zM6 16h2v1h-2zM9 16h2v1h-2zM12 16h1v1h-1zM15 16h2v1h-2zM18 16h1v1h-1zM20 16h1v1h-1zM24 16h1v1h-1zM27 16h3v1h-3zM31 16h3v1h-3zM35 16h2v1h-2zM4 17h1v1h-1zM6 17h1v1h-1zM8 17h1v1h-1zM11 17h1v1h-1zM13 17h3v1h-3zM17 17h2v1h-2zM24 17h2v1h-2zM28 17h1v1h-1zM31 17h1v1h-1zM33 17h1v1h-1zM35 17h1v1h-1zM4 18h1v1h-1zM6 18h6v1h-6zM16 18h1v1h-1zM18 18h1v1h-1zM21 18h5v1h-5zM30 18h1v1h-1zM33 18h2v1h-2zM4 19h4v1h-4zM9 19h1v1h-1zM11 19h1v1h-1zM14 19h2v1h-2zM17 19h3v1h-3zM22 19h1v1h-1zM25 19h1v1h-1zM27 19h1v1h-1zM29 19h3v1h-3zM34 19h1v1h-1zM10 20h5v1h-5zM22 20h1v1h-1zM25 20h1v1h-1zM29 20h2v1h-2zM32 20h3v1h-3zM5 21h1v1h-1zM7 21h1v1h-1zM12 21h3v1h-3zM16 21h5v1h-5zM24 21h5v1h-5zM30 21h1v1h-1zM32 21h2v1h-2zM35 21h2v1h-2zM5 22h3v1h-3zM10 22h1v1h-1zM12 22h3v1h-3zM16 22h1v1h-1zM18 22h3v1h-3zM22 22h1v1h-1zM24 22h1v1h-1zM26 22h1v1h-1zM29 22h1v1h-1zM31 22h2v1h-2zM34 22h2v1h-2zM5 23h2v1h-2zM8 23h2v1h-2zM11 23h1v1h-1zM13 23h1v1h-1zM17 23h1v1h-1zM21 23h2v1h-2zM24 23h1v1h-1zM26 23h5v1h-5zM32 23h1v1h-1zM35 23h2v1h-2zM4 24h2v1h-2zM10 24h2v1h-2zM14 24h1v1h-1zM16 24h1v1h-1zM20 24h1v1h-1zM26 24h1v1h-1zM31 24h1v1h-1zM33 24h4v1h-4zM4 25h4v1h-4zM9 25h1v1h-1zM11 25h2v1h-2zM14 25h3v1h-3zM18 25h3v1h-3zM24 25h1v1h-1zM27 25h4v1h-4zM33 25h1v1h-1zM36 25h1v1h-1zM8 26h1v1h-1zM10 26h1v1h-1zM14 26h1v1h-1zM16 26h1v1h-1zM19 26h1v1h-1zM21 26h1v1h-1zM23 26h2v1h-2zM26 26h11v1h-11zM5 27h2v1h-2zM11 27h3v1h-3zM18 27h2v1h-2zM22 27h1v1h-1zM24 27h1v1h-1zM27 27h1v1h-1zM31 27h1v1h-1zM33 27h1v1h-1zM36 27h1v1h-1zM4 28h1v1h-1zM7 28h1v1h-1zM9 28h7v1h-7zM17 28h1v1h-1zM21 28h1v1h-1zM23 28h2v1h-2zM26 28h1v1h-1zM28 28h6v1h-6zM35 28h2v1h-2zM12 29h3v1h-3zM16 29h1v1h-1zM18 29h3v1h-3zM23 29h1v1h-1zM25 29h2v1h-2zM28 29h1v1h-1zM32 29h2v1h-2zM4 30h7v1h-7zM12 30h1v1h-1zM14 30h3v1h-3zM18 30h1v1h-1zM20 30h4v1h-4zM25 30h1v1h-1zM27 30h2v1h-2zM30 30h1v1h-1zM32 30h1v1h-1zM4 31h1v1h-1zM10 31h1v1h-1zM12 31h1v1h-1zM14 31h5v1h-5zM20 31h3v1h-3zM27 31h2v1h-2zM32 31h3v1h-3zM4 32h1v1h-1zM6 32h3v1h-3zM10 32h1v1h-1zM15 32h2v1h-2zM19 32h5v1h-5zM26 32h7v1h-7zM34 32h2v1h-2zM4 33h1v1h-1zM6 33h3v1h-3zM10 33h1v1h-1zM12 33h2v1h-2zM15 33h1v1h-1zM18 33h1v1h-1zM20 33h2v1h-2zM23 33h1v1h-1zM26 33h1v1h-1zM28 33h1v1h-1zM31 33h1v1h-1zM33 33h1v1h-1zM35 33h2v1h-2zM4 34h1v1h-1zM6 34h3v1h-3zM10 34h1v1h-1zM12 34h1v1h-1zM18 34h4v1h-4zM24 34h2v1h-2zM28 34h1v1h-1zM30 34h2v1h-2zM33 34h1v1h-1zM4 35h1v1h-1zM10 35h1v1h-1zM13 35h1v1h-1zM16 35h1v1h-1zM21 35h1v1h-1zM24 35h1v1h-1zM28 35h1v1h-1zM30 35h3v1h-3zM36 35h1v1h-1zM4 36h7v1h-7zM12 36h1v1h-1zM15 36h2v1h-2zM20 36h4v1h-4zM25 36h1v1h-1zM27 36h1v1h-1zM29 36h2v1h-2zM32 36h1v1h-1zM34 36h1v1h-1z'
 
 const LAST_MODIFIED_STORAGE_KEY = 'pwaLastModifiedAt'
 const LOGIN_AT_STORAGE_KEY = 'physiooptima-doku-login-at'
@@ -612,7 +608,6 @@ export default function App() {
   const [docEntries, setDocEntries] = useState([])
   const [docEntryImageCounts, setDocEntryImageCounts] = useState({})
   const [docImages, setDocImages] = useState([])
-  const [befundDrawingOpen, setBefundDrawingOpen] = useState(false)
   const [patientDocuments, setPatientDocuments] = useState([])
   const [libraryCategory, setLibraryCategory] = useState('nachbehandlung')
   const [libraryItems, setLibraryItems] = useState([])
@@ -662,6 +657,9 @@ export default function App() {
   const [cloudBackupSummary, setCloudBackupSummary] = useState(null)
   const [cloudBackupVerification, setCloudBackupVerification] = useState(null)
   const [cloudBackupVerificationFile, setCloudBackupVerificationFile] = useState('')
+  const [rememberPractice, setRememberPractice] = useState(false)
+  const [practiceExpiresAt, setPracticeExpiresAt] = useState(0)
+  const [practiceSessionWarning, setPracticeSessionWarning] = useState('')
   const [v3Keyring, setV3Keyring] = useState(null)
   const [v3KeyringReady, setV3KeyringReady] = useState(false)
   const [v3KeyBusy, setV3KeyBusy] = useState(false)
@@ -737,8 +735,8 @@ export default function App() {
   const patientDocumentBaseRef = useRef(null)
   const patientDocumentSaveBusyRef = useRef(false)
   const libraryCategoryRef = useRef('nachbehandlung')
-  const isOwner = true
-  const isStaff = false
+  const isOwner = userRole === USER_ROLES.OWNER
+  const isStaff = userRole === USER_ROLES.STAFF
   const canManageTrash = isOwner && Boolean(cloudUser) && !v3ReadMode
 
   const filteredPatients = useMemo(() => {
@@ -792,6 +790,22 @@ export default function App() {
   }, [selectedPatient, patientForm, selectedPrescription, prescriptionForm, docForm, docBaseEntry, docImages, docImageBaseIds, patientDocumentForm, patientDocumentBase, libraryCategory, view])
 
   useEffect(() => {
+    if (!practiceExpiresAt) return undefined
+    const checkExpiry = () => {
+      if (Date.now() >= practiceExpiresAt) handleLockV3PracticeKey()
+    }
+    const timer = window.setInterval(checkExpiry, 1000)
+    window.addEventListener('focus', checkExpiry)
+    document.addEventListener('visibilitychange', checkExpiry)
+    checkExpiry()
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', checkExpiry)
+      document.removeEventListener('visibilitychange', checkExpiry)
+    }
+  }, [practiceExpiresAt])
+
+  useEffect(() => {
     // Im V3-Hauptbetrieb wird vor dem Entsperren absichtlich keine
     // Patientenliste geladen. So blitzt kein alter lokaler/Klartext-Stand auf.
     if (!cloudUser) return
@@ -820,11 +834,24 @@ export default function App() {
     Promise.all([
       loadV3Keyring(cloudUser.id),
       getV3EncryptedCounts(cloudUser.id),
-    ]).then(([keyring, counts]) => {
+    ]).then(async ([keyring, counts]) => {
+      const saved = keyring ? await restorePracticeKey(cloudUser.id, keyring).catch(() => null) : null
       if (!active) return
+      if (saved) {
+        v3PracticeKeyRef.current = saved.key
+        v3PrimaryModeRef.current = true
+        setV3Unlocked(true)
+        setV3PrimaryMode(true)
+        setPracticeExpiresAt(saved.expiresAt)
+        setRememberPractice(true)
+      }
       setV3Keyring(keyring)
       setV3Counts(counts)
       setV3KeyringReady(true)
+      if (saved) {
+        await loadListData()
+        if (active && navigator.onLine) await flushV3PrimaryOutbox()
+      }
     }).catch(error => {
       if (!active) return
       setV3KeyringReady(true)
@@ -880,6 +907,9 @@ export default function App() {
       setAuthReady(true)
 
       if (event === 'SIGNED_OUT') {
+        void forgetPracticeKey().catch(() => {})
+        setPracticeExpiresAt(0)
+        setRememberPractice(false)
         v3PracticeKeyRef.current = null
         v3CandidateBundleRef.current = null
         v3ReadModeRef.current = false
@@ -3440,6 +3470,20 @@ async function handleImportChangeZip(event) {
     }
   }
 
+  async function savePracticeSession(key) {
+    setPracticeSessionWarning('')
+    try {
+      if (rememberPractice) {
+        setPracticeExpiresAt(await rememberPracticeKey(key, cloudUser.id, v3Keyring))
+      } else {
+        await forgetPracticeKey()
+        setPracticeExpiresAt(0)
+      }
+    } catch {
+      setPracticeSessionWarning('Die 24-Stunden-Freigabe konnte auf diesem Gerät nicht gespeichert werden. Nach einem Neustart bitte erneut entsperren.')
+    }
+  }
+
   async function handleOpenEncryptedPractice(event) {
     event.preventDefault()
     setError('')
@@ -3457,6 +3501,7 @@ async function handleImportChangeZip(event) {
     setV3KeyBusy(true)
     try {
       const key = await unlockPracticeKey(v3Passphrase, v3Keyring.password_envelope)
+      await savePracticeSession(key)
       v3PracticeKeyRef.current = key
       v3PrimaryModeRef.current = true
       setV3Unlocked(true)
@@ -3499,6 +3544,7 @@ async function handleImportChangeZip(event) {
         v3RecoveryInput,
         v3Keyring.recovery_envelope,
       )
+      await savePracticeSession(key)
       v3PracticeKeyRef.current = key
       v3PrimaryModeRef.current = true
       setV3Unlocked(true)
@@ -3526,23 +3572,30 @@ async function handleImportChangeZip(event) {
   }
 
   function handleLockV3PracticeKey() {
-    if (v3ReadModeRef.current) {
-      setError('Bitte zuerst den V3-Lesemodus beenden, bevor du den Praxisschlüssel sperrst.')
-      return
-    }
-    if (v3MirrorModeRef.current) {
-      setError('Bitte zuerst den V3-Schreibspiegel beenden, bevor du den Praxisschlüssel sperrst.')
-      return
-    }
-    if (v3PrimaryModeRef.current) {
-      setError('Bitte zuerst die V3-Hauptbetrieb-Testfahrt beenden, bevor du den Praxisschlüssel sperrst.')
-      return
-    }
-
+    void forgetPracticeKey().catch(() => setError('Die gespeicherte Freigabe konnte nicht entfernt werden. Bitte die Website-Daten im Browser löschen.'))
+    setPracticeExpiresAt(0)
+    setRememberPractice(false)
     v3PracticeKeyRef.current = null
+    v3ReadModeRef.current = false
+    v3MirrorModeRef.current = false
+    v3PrimaryModeRef.current = false
+    setV3ReadMode(false)
+    setV3MirrorMode(false)
+    setV3PrimaryMode(false)
     setV3Unlocked(false)
+    setV3Passphrase('')
+    setV3RecoveryInput('')
     setV3BridgeVerification(null)
-    setSuccessMessage('V3-Praxisschlüssel aus dem Arbeitsspeicher entfernt.')
+    setPatients([])
+    setDeletedPatients([])
+    setSelectedPatient(null)
+    setSelectedPrescription(null)
+    setPrescriptions([])
+    setPatientDocuments([])
+    setDocEntries([])
+    setDocImages([])
+    setLibraryItems([])
+    setSuccessMessage('Praxis gesperrt. Die gespeicherte Freigabe wurde entfernt.')
   }
 
   function ensureV3MirrorWriteReady({ allowOffline = false } = {}) {
@@ -5053,15 +5106,6 @@ async function handleImportChangeZip(event) {
     }
   }
 
-  function openBefundDrawing() {
-    try {
-      const existing = readDrawing(patientDocumentForm.file)
-      if (patientDocumentForm.file && !existing &&
-          !window.confirm('Die vorhandene Datei durch einen neuen Zeichenbefund ersetzen? Erst beim Speichern wird die Änderung übernommen.')) return
-      setBefundDrawingOpen(true)
-    } catch (e) { setError(e.message) }
-  }
-
   async function handleSavePatientDocument(event) {
     event.preventDefault()
     if (!selectedPatient) return setError('Kein Patient ausgewählt.')
@@ -5160,9 +5204,7 @@ async function handleImportChangeZip(event) {
   async function handleLoadPatientDocumentConflict() {
     if (!patientDocumentConflict) return
     try {
-      const loaded = v3PrimaryModeRef.current
-        ? await loadV3PatientDocumentFile(patientDocumentConflict, v3PracticeKeyRef.current)
-        : await loadPatientDocumentFile(patientDocumentConflict)
+      const loaded = await loadPatientDocumentFile(patientDocumentConflict)
       setPatientDocumentForm(loaded)
       setPatientDocumentBase(patientDocumentConflict)
       setPatientDocumentConflict(null)
@@ -5439,6 +5481,10 @@ function openStoredFile(file) {
                 required
                 autoFocus
               />
+              <label className="muted" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input type="checkbox" checked={rememberPractice} onChange={event => setRememberPractice(event.target.checked)} />
+                Auf diesem Gerät 24 Stunden entsperrt bleiben
+              </label>
               <button className="btn btn-primary" disabled={v3KeyBusy}>
                 {v3KeyBusy ? 'Entsperre …' : 'Praxis öffnen'}
               </button>
@@ -5461,8 +5507,10 @@ function openStoredFile(file) {
             </details>
 
             <p className="muted">
-              Das Verschlüsselungspasswort wird nicht gespeichert. Der entsperrte Praxisschlüssel
-              bleibt nur im Arbeitsspeicher, solange diese PWA geöffnet ist.
+              Das Passwort wird nicht gespeichert. Mit dem Häkchen bleibt der Praxisschlüssel
+              für 24 Stunden auf diesem Gerät verfügbar, auch nach dem Schließen der PWA.
+              Wer dein entsperrtes Gerät benutzt, kann in dieser Zeit die Dokumentation öffnen.
+              „Praxis sperren“ und Abmelden entfernen die Freigabe.
             </p>
 
             {error && <p className="msg msg-error">{error}</p>}
@@ -5480,6 +5528,8 @@ function openStoredFile(file) {
             <img src="/logo_kl.gif" alt="Praxis Logo" className="sidebar-logo" />
           </div>
 
+          {practiceSessionWarning && <p className="msg msg-error">{practiceSessionWarning}</p>}
+          <button className="btn btn-ghost" onClick={handleLockV3PracticeKey}>Praxis sperren</button>
           <nav className="sidebar-nav">
             {[
               ['patients', 'Patienten', Home],
@@ -5488,6 +5538,7 @@ function openStoredFile(file) {
               ['library', 'Bibliothek', Library],
               ['backup', 'Backup', CloudUpload],
               ['settings', 'Einstellungen', Settings],
+	      ['speech', 'Sprachmodell', FileText],
             ].map(([key, label, Icon]) => (
               <button
                 key={key}
@@ -5501,6 +5552,7 @@ function openStoredFile(file) {
                   if (key === 'library') setView('libraryHome')
                   if (key === 'exercises') setView('list')
                   if (key === 'settings') setView('list')
+		  if (key === 'speech') setView('speechModel')
                 }}
               >
                 <Icon size={16} />
@@ -5549,8 +5601,6 @@ function openStoredFile(file) {
               </div>
             )}
 
-            
-
             {v3MirrorMode && (
               <div className="sync-status sync-status-active">
                 <strong>🪞 V3-Schreibspiegel aktiv</strong>
@@ -5586,144 +5636,1019 @@ function openStoredFile(file) {
               </div>
             )}
 
-            {nav === 'exercises' && (
-              <section className="surface-card stack-lg">
-                <h2 className="section-title">Übungen</h2>
-                <div className="backup-card" style={{ maxWidth: 520, textAlign: 'center', margin: '0 auto' }}>
-                  <h3>Übungs-PWA</h3>
-                  <p className="muted">QR-Code scannen oder die Übungs-PWA direkt öffnen.</p>
+            {nav === 'exercises' && <section className="surface-card stack-lg">
+              <h2 className="section-title">Übungen</h2>
+              <p className="muted">Dieser Bereich wird später erweitert.</p>
+              <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
+            </section>}
 
-                  <div style={{ width: 260, maxWidth: '100%', margin: '8px auto 16px', padding: 14, background: '#fff', borderRadius: 14 }}>
-                    <svg viewBox="0 0 41 41" role="img" aria-label="QR-Code zur Übungs-PWA" style={{ display: 'block', width: '100%', height: 'auto' }}>
-                      <rect width="41" height="41" fill="white" />
-                      <path d={EXERCISE_QR_PATH} fill="black" />
-                    </svg>
-                  </div>
+	  {nav === 'speech' && view === 'speechModel' && (
+  	  <section className="surface-card stack-lg">
+    	<h2 className="section-title">Sprachmodell</h2>
+    	<p className="muted">
+      Testbereich für Wörterbuch, typische Sätze und spätere Spracherkennung.
+    	</p>
 
-                  <a className="btn btn-primary" href={EXERCISE_PWA_URL} target="_blank" rel="noreferrer">
-                    Übungs-PWA öffnen
-                  </a>
-                  <p className="muted" style={{ overflowWrap: 'anywhere', marginTop: 12 }}>{EXERCISE_PWA_URL}</p>
+    <button
+      type="button"
+      className="btn btn-primary"
+      onClick={async () => {
+        await loadModel()
+        setSuccessMessage('Sprachmodell-Test erfolgreich.')
+        setError('')
+      }}
+    >
+      Sprachmodell testen
+    </button>
+  </section>
+)}
+
+            {nav === 'settings' && <section className="surface-card stack-lg">
+              <h2 className="section-title">Einstellungen</h2>
+
+              <div className="stack">
+                <div>
+                  <h3 className="section-subtitle">Rolle auf diesem Gerät</h3>
+                  <p className="muted">
+                    Diese Einstellung gilt nur lokal für dieses Gerät. Sie ist ein Arbeitsmodus, noch kein echtes Login-System.
+                  </p>
                 </div>
 
-                <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
-              </section>
-            )}
+                <label className="field-label">
+                  Benutzername / Kürzel
+                  <input
+                    className="field"
+                    placeholder="z. B. Anna oder Sabine"
+                    value={userName}
+                    onChange={event => handleChangeUserName(event.target.value)}
+                  />
+                </label>
 
-            
+                <div className="stack-sm">
+                  <button
+                    type="button"
+                    className={`btn ${isOwner ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => handleChangeRole(USER_ROLES.OWNER)}
+                  >
+                    Praxisleitung
+                  </button>
 
-            {nav === 'settings' && (
-              <section className="surface-card stack-lg">
-                <h2 className="section-title">Einstellungen</h2>
-                <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
-              </section>
-            )}
+                  <button
+                    type="button"
+                    className={`btn ${isStaff ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => handleChangeRole(USER_ROLES.STAFF)}
+                  >
+                    Mitarbeiter
+                  </button>
+                </div>
+
+                <p className="muted">
+                  Aktuelle Rolle: <strong>{USER_ROLE_LABELS[userRole]}</strong>
+                </p>
+
+                {isStaff && (
+                  <p className="muted">
+                    Mitarbeiter-Modus: Patient anlegen, Verordnung anlegen und Doku schreiben. Backup-Export sendet später nur Änderungen an die Praxisleitung.
+                  </p>
+                )}
+
+                {isOwner && (
+                  <p className="muted">
+                    Praxisleitungs-Modus: voller Zugriff inklusive ZIP-Backup, Import, Dokumente/Befunde und Cloud-Testfunktionen.
+                  </p>
+                )}
+              </div>
+
+              <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
+            </section>}
 
             {nav === 'backup' && view === 'backup' && (
               <section className="surface-card stack-lg">
                 <h2 className="section-title">Backup</h2>
+                <p className="muted">
+                  Hier liegt das vollständige Rettungsboot: ZIP-Backup exportieren oder komplett wieder einspielen.
+                </p>
 
                 <div className="backup-card">
-                  <h3>🔐 Vollständiges verschlüsseltes V3-Backup</h3>
+                  <h3>Verschlüsselter Cloud-Tresor</h3>
+                  {!cloudUser ? (
+                    <form className="stack-sm" onSubmit={handleCloudLogin}>
+                      <input className="field" type="email" placeholder="Geschäftliche E-Mail" value={cloudEmail} onChange={e => setCloudEmail(e.target.value)} required />
+                      <input className="field" type="password" placeholder="Doku-PWA-Passwort" value={cloudPassword} onChange={e => setCloudPassword(e.target.value)} required />
+                      <button className="btn btn-primary" disabled={cloudBusy}>Bei Supabase anmelden</button>
+                    </form>
+                  ) : (
+                    <div className="stack-sm">
+                      <p className="muted">Angemeldet als <strong>{cloudUser.email}</strong></p>
+                      <p className="muted">Cloud-Stand: <strong>{cloudUpdatedAt ? formatDateTime(cloudUpdatedAt) : 'Noch kein Cloud-Backup'}</strong></p>
+                      <button className="btn btn-secondary" onClick={handleCloudUpload} disabled={cloudBusy}>Sicher mit Cloud synchronisieren</button>
+                      <button className="btn btn-ghost" onClick={handleCloudDownload} disabled={cloudBusy}>Cloud-Daten herunterladen (lokal ersetzen)</button>
+                      <div className={`sync-status sync-status-${autoSyncStatus}`}>
+                        <strong>Geräte-Synchronisation</strong>
+                        <span>{autoSyncMessage}</span>
+                      </div>
+                      {!autoSyncPassword ? (
+                        <button className="btn btn-green" onClick={handleEnableAutoSync} disabled={cloudBusy}>
+                          Automatische Synchronisation starten
+                        </button>
+                      ) : (
+                        <button className="btn btn-ghost" onClick={handleDisableAutoSync} disabled={cloudBusy}>
+                          Automatische Synchronisation beenden
+                        </button>
+                      )}
+                      <button className="btn btn-ghost" onClick={() => { handleDisableAutoSync(); supabase.auth.signOut() }} disabled={cloudBusy}>Abmelden</button>
+                    </div>
+                  )}
+                  <p className="muted">Das Verschlüsselungspasswort verlässt dieses Gerät nicht. Für automatische Synchronisation bleibt es nur bis zum Schließen der PWA im Arbeitsspeicher.</p>
+                </div>
+
+                {isOwner && (
+                  <div className="backup-card">
+                    <h3>🌉 V3-Brücke: echter Praxisschlüssel</h3>
+                    <p>
+                      Das ist jetzt nicht mehr das Labor. Dieser Schlüssel soll später die echte verschlüsselte
+                      Parallelstruktur öffnen. Die alten Praxistabellen bleiben unverändert, und die neuen V3-Tabellen
+                      sind derzeit noch leer.
+                    </p>
+
+                    <p className="muted">
+                      Schlüsseltechnik: <strong>{V2_CRYPTO_PARAMETERS.algorithm}</strong> ·
+                      {' '}{V2_CRYPTO_PARAMETERS.kdf} ·
+                      {' '}{V2_CRYPTO_PARAMETERS.iterations.toLocaleString('de-DE')} Ableitungsrunden.
+                      Die tägliche Passphrase und der Wiederherstellungscode werden nicht bei Supabase gespeichert.
+                    </p>
+
+                    {!v3Keyring ? (
+                      <div className="stack-sm">
+                        {!v3RecoveryCode ? (
+                          <form className="stack-sm" onSubmit={handleCreateV3PracticeKey}>
+                            <input
+                              className="field"
+                              type="password"
+                              autoComplete="new-password"
+                              placeholder="Echte Verschlüsselungs-Passphrase (mindestens 16 Zeichen)"
+                              value={v3Passphrase}
+                              onChange={event => setV3Passphrase(event.target.value)}
+                              required
+                            />
+                            <input
+                              className="field"
+                              type="password"
+                              autoComplete="new-password"
+                              placeholder="Passphrase wiederholen"
+                              value={v3PassphraseConfirm}
+                              onChange={event => setV3PassphraseConfirm(event.target.value)}
+                              required
+                            />
+                            <button className="btn btn-green" disabled={v3KeyBusy || !cloudUser}>
+                              {v3KeyBusy ? 'Erzeuge …' : 'Echten Praxisschlüssel erzeugen'}
+                            </button>
+                          </form>
+                        ) : (
+                          <>
+                            <div className="sync-status">
+                              <strong>Wiederherstellungsschlüssel – einmalig sichern</strong>
+                              <span style={{ overflowWrap: 'anywhere' }}>{v3RecoveryCode}</span>
+                              <span>
+                                Diesen Code nicht hier im Chat schicken. Am besten die Datei auf einem getrennten
+                                Datenträger oder an einem anderen sicheren Ort aufbewahren.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleDownloadV3RecoveryKey}
+                              disabled={v3KeyBusy}
+                            >
+                              Wiederherstellungsschlüssel als .txt speichern
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-green"
+                              onClick={handleActivateV3PracticeKey}
+                              disabled={v3KeyBusy || !v3RecoveryDownloaded}
+                            >
+                              {v3KeyBusy ? 'Aktiviere …' : 'Praxisschlüssel aktivieren'}
+                            </button>
+
+                            {!v3RecoveryDownloaded && (
+                              <p className="muted">
+                                Aktivieren wird erst freigegeben, nachdem die Wiederherstellungsdatei gespeichert wurde.
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="stack-sm">
+                        <div className="sync-status sync-status-active">
+                          <strong>V3-Praxisschlüssel eingerichtet</strong>
+                          <span>
+                            Schlüsselversion {v3Keyring.crypto_version} · eingerichtet
+                            {' '}{formatDateTime(v3Keyring.created_at)}
+                          </span>
+                          <span>
+                            Parallelbestand:
+                            {' '}Patienten {v3Counts?.patients ?? 0} ·
+                            {' '}Verordnungen {v3Counts?.prescriptions ?? 0} ·
+                            {' '}Doku {v3Counts?.docEntries ?? 0} ·
+                            {' '}Bilder {v3Counts?.docEntryImages ?? 0} ·
+                            {' '}Befunde {v3Counts?.patientDocuments ?? 0} ·
+                            {' '}Bibliothek {v3Counts?.libraryItems ?? 0}
+                          </span>
+                        </div>
+
+                        {!v3Unlocked ? (
+                          <>
+                            <form className="stack-sm" onSubmit={handleUnlockV3PracticeKey}>
+                              <input
+                                className="field"
+                                type="password"
+                                autoComplete="current-password"
+                                placeholder="Echte Verschlüsselungs-Passphrase"
+                                value={v3Passphrase}
+                                onChange={event => setV3Passphrase(event.target.value)}
+                                required
+                              />
+                              <button className="btn btn-secondary" disabled={v3KeyBusy}>
+                                {v3KeyBusy ? 'Entsperre …' : 'V3-Praxisschlüssel entsperren'}
+                              </button>
+                            </form>
+
+                            <input
+                              className="field"
+                              placeholder="Wiederherstellungsschlüssel nur für Notfall-Test"
+                              value={v3RecoveryInput}
+                              onChange={event => setV3RecoveryInput(event.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleUnlockV3WithRecovery}
+                              disabled={v3KeyBusy || !v3RecoveryInput.trim()}
+                            >
+                              Mit Wiederherstellungsschlüssel entsperren
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <div className="sync-status sync-status-active">
+                              <strong>🔓 V3-Praxisschlüssel entsperrt</strong>
+                              <span>
+                                {practiceExpiresAt ? `Auf diesem Gerät freigegeben bis ${formatDateTime(new Date(practiceExpiresAt).toISOString())}` : 'Nur im Arbeitsspeicher dieses Geräts.'}
+                                {v3Counts?.patients
+                                  ? ' Der verschlüsselte Parallelbestand kann jetzt aktualisiert und geprüft werden.'
+                                  : ' Die alte Praxis ist bereit für die verschlüsselte Parallelkopie.'}
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-green"
+                              onClick={handleBuildV3ParallelBridge}
+                              disabled={v3BridgeBusy || v3PrimaryMode}
+                            >
+                              {v3PrimaryMode
+                                ? 'Produktionsbetrieb: Brücken-Neuaufbau gesperrt'
+                                : v3BridgeBusy
+                                  ? 'V3-Brücke wird gebaut …'
+                                  : 'V3-Parallelbestand bauen / aktualisieren + vollständig prüfen'}
+                            </button>
+
+                            {v3BridgeProgress && (
+                              <div className="sync-status">
+                                <strong>Brückenbau – Status</strong>
+                                <span>{v3BridgeProgress}</span>
+                              </div>
+                            )}
+
+                            {v3BridgeVerification && (
+                              <div className="sync-status sync-status-active">
+                                <strong>✅ V3-Brückenbelag vollständig geprüft</strong>
+                                <span>
+                                  Patienten: {v3BridgeVerification.v3Counts.patients} ·
+                                  {' '}Verordnungen: {v3BridgeVerification.v3Counts.prescriptions} ·
+                                  {' '}Doku: {v3BridgeVerification.v3Counts.docEntries}
+                                </span>
+                                <span>
+                                  Bilder: {v3BridgeVerification.v3Counts.docEntryImages} ·
+                                  {' '}Befunde: {v3BridgeVerification.v3Counts.patientDocuments} ·
+                                  {' '}Bibliothek: {v3BridgeVerification.v3Counts.libraryItems}
+                                </span>
+                                <span>
+                                  Verschlüsselte Dateien entschlüsselt + SHA-256 geprüft:
+                                  {' '}{v3BridgeVerification.verifiedFiles} ·
+                                  {' '}{formatByteCount(v3BridgeVerification.verifiedBytes)}
+                                </span>
+                                {v3BridgeVerification.missingDeletedFiles > 0 && (
+                                  <span>
+                                    {v3BridgeVerification.missingDeletedFiles} bereits gelöschte Dateireferenz(en)
+                                    hatten erwartungsgemäß keine Quelldatei mehr.
+                                  </span>
+                                )}
+                                <span>
+                                  Alte Tabellen/Dateien: unverändert vorhanden.
+                                </span>
+                              </div>
+                            )}
+
+                            {!v3ReadMode && !v3MirrorMode && !v3PrimaryMode && (v3Counts?.patients ?? 0) > 0 && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  onClick={handleEnterV3ReadMode}
+                                  disabled={v3BridgeBusy}
+                                >
+                                  🔒 V3-Lesemodus starten
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="btn btn-green"
+                                  onClick={handleStartV3MirrorMode}
+                                  disabled={v3BridgeBusy}
+                                >
+                                  🪞 V3-Schreibspiegel starten
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="btn btn-green"
+                                  onClick={handleStartV3PrimaryMode}
+                                  disabled={v3BridgeBusy}
+                                >
+                                  🚗 V3-Hauptbetrieb – Testfahrt starten
+                                </button>
+                              </>
+                            )}
+
+                            {v3MirrorMode && (
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={handleStopV3MirrorMode}
+                                disabled={v3BridgeBusy}
+                              >
+                                V3-Schreibspiegel beenden
+                              </button>
+                            )}
+
+                            {v3PrimaryMode && (
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={handleStopV3PrimaryMode}
+                                disabled={v3BridgeBusy}
+                              >
+                                V3-Hauptbetrieb-Testfahrt beenden
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLockV3PracticeKey}
+                              disabled={v3BridgeBusy}
+                            >
+                              V3-Praxisschlüssel sperren
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isOwner && (
+                  <div className="backup-card">
+                    <h3>🔐 V2-Verschlüsselungslabor</h3>
+                    <p>
+                      Rein lokaler Test des zukünftigen Praxisschlüssels. Diese Karte schreibt nichts nach Supabase
+                      und verändert keine Patienten-, Doku- oder Dateidaten.
+                    </p>
+
+                    <p className="muted">
+                      Technik: <strong>{V2_CRYPTO_PARAMETERS.algorithm}</strong> ·
+                      {' '}{V2_CRYPTO_PARAMETERS.kdf} ·
+                      {' '}{V2_CRYPTO_PARAMETERS.iterations.toLocaleString('de-DE')} Ableitungsrunden
+                    </p>
+
+                    {!cryptoLabConfigured ? (
+                      <form className="stack-sm" onSubmit={handleCreateCryptoLab}>
+                        <input
+                          className="field"
+                          type="password"
+                          autoComplete="new-password"
+                          placeholder="Test-Passphrase (mindestens 12 Zeichen)"
+                          value={cryptoPassphrase}
+                          onChange={event => setCryptoPassphrase(event.target.value)}
+                          required
+                        />
+                        <input
+                          className="field"
+                          type="password"
+                          autoComplete="new-password"
+                          placeholder="Test-Passphrase wiederholen"
+                          value={cryptoPassphraseConfirm}
+                          onChange={event => setCryptoPassphraseConfirm(event.target.value)}
+                          required
+                        />
+                        <button className="btn btn-secondary" disabled={cryptoBusy}>
+                          {cryptoBusy ? 'Erzeuge Schlüssel …' : 'Test-Praxisschlüssel erzeugen'}
+                        </button>
+                        <p className="muted">
+                          Bitte hier noch nicht dein endgültiges Praxis-Passwort verwenden. Dies ist nur das Labor.
+                        </p>
+                      </form>
+                    ) : (
+                      <div className="stack-sm">
+                        {!cryptoUnlocked ? (
+                          <>
+                            <form className="stack-sm" onSubmit={handleUnlockCryptoLab}>
+                              <input
+                                className="field"
+                                type="password"
+                                autoComplete="current-password"
+                                placeholder="Test-Passphrase"
+                                value={cryptoPassphrase}
+                                onChange={event => setCryptoPassphrase(event.target.value)}
+                                required
+                              />
+                              <button className="btn btn-secondary" disabled={cryptoBusy}>
+                                {cryptoBusy ? 'Entsperre …' : 'Test-Praxisschlüssel entsperren'}
+                              </button>
+                            </form>
+
+                            <div className="stack-sm">
+                              <input
+                                className="field"
+                                placeholder="Wiederherstellungsschlüssel"
+                                value={cryptoRecoveryInput}
+                                onChange={event => setCryptoRecoveryInput(event.target.value)}
+                              />
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={handleUnlockCryptoLabRecovery}
+                                disabled={cryptoBusy || !cryptoRecoveryInput.trim()}
+                              >
+                                Mit Wiederherstellungsschlüssel entsperren
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="sync-status sync-status-active">
+                              <strong>Test-Praxisschlüssel entsperrt</strong>
+                              <span>Der Schlüssel liegt nur im Arbeitsspeicher dieser geöffneten PWA.</span>
+                            </div>
+
+                            <textarea
+                              className="field"
+                              rows="3"
+                              value={cryptoTestText}
+                              onChange={event => setCryptoTestText(event.target.value)}
+                            />
+
+                            <button
+                              type="button"
+                              className="btn btn-green"
+                              onClick={handleCryptoRoundTrip}
+                              disabled={cryptoBusy}
+                            >
+                              {cryptoBusy ? 'Teste …' : 'Testtext verschlüsseln + entschlüsseln'}
+                            </button>
+
+                            <div className="sync-status">
+                              <strong>Nächster Bohrabschnitt: Fantasiepatient → Supabase</strong>
+                              <span>
+                                Max Muster · 01.02.1970 · Schulter rechts. Vor dem Upload wird der komplette
+                                Datensatz hier im Browser verschlüsselt.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleSaveCryptoLabPatientToSupabase}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Fantasiepatient verschlüsselt in Supabase speichern
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLoadCryptoLabPatientFromSupabase}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Aus Supabase laden + lokal entschlüsseln
+                            </button>
+
+                            {cryptoCloudCipherPreview && (
+                              <div className="sync-status">
+                                <strong>Von Supabase zurückgegeben – nur Chiffretext</strong>
+                                <span style={{ overflowWrap: 'anywhere' }}>{cryptoCloudCipherPreview}</span>
+                                {cryptoCloudUpdatedAt && (
+                                  <span>Supabase-Stand: {formatDateTime(cryptoCloudUpdatedAt)}</span>
+                                )}
+                              </div>
+                            )}
+
+                            {cryptoCloudPatient && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Auf diesem Gerät wieder lesbar</strong>
+                                <span>
+                                  {cryptoCloudPatient.firstName} {cryptoCloudPatient.lastName} ·
+                                  {' '}{formatDate(cryptoCloudPatient.birthDate)} ·
+                                  {' '}{cryptoCloudPatient.note}
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="sync-status">
+                              <strong>⛏️ Mini-Praxis: drei getrennte Tresorfächer</strong>
+                              <span>
+                                Patient „Erika Probe“ → Verordnung „MT“ → Doku „Schulter rechts …“.
+                                Jeder Inhalt wird separat verschlüsselt; offen bleiben nur zufällige IDs und ihre Verknüpfungen.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleSaveEncryptedMiniPractice}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Mini-Praxis verschlüsselt speichern
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLoadEncryptedMiniPractice}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Mini-Praxis laden + lokal entschlüsseln
+                            </button>
+
+                            {cryptoMiniCipherSummary.length > 0 && (
+                              <div className="sync-status">
+                                <strong>Was Supabase technisch sehen darf</strong>
+                                {cryptoMiniCipherSummary.map(item => (
+                                  <span key={item.label}>
+                                    {item.label}: ID {item.id.slice(0, 8)}… ·
+                                    {' '}{item.chars} Zeichen Chiffretext
+                                    {item.parent ? ` · verknüpft mit ${item.parent.slice(0, 8)}…` : ''}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {cryptoMiniPractice && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Auf deinem Gerät wieder zusammengesetzt</strong>
+                                <span>
+                                  Patient: {cryptoMiniPractice.patient.firstName} {cryptoMiniPractice.patient.lastName} ·
+                                  {' '}{formatDate(cryptoMiniPractice.patient.birthDate)}
+                                </span>
+                                <span>
+                                  Verordnung: {formatDate(cryptoMiniPractice.prescription.issueDate)} ·
+                                  {' '}{cryptoMiniPractice.prescription.remedy}
+                                </span>
+                                <span>
+                                  Doku: {formatDate(cryptoMiniPractice.docEntry.entryDate)} ·
+                                  {' '}{cryptoMiniPractice.docEntry.text}
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="sync-status">
+                              <strong>🌊 Mariannengraben: verschlüsselte Datei im Storage</strong>
+                              <span>
+                                Ein künstliches PDF mit „Erika Probe / Schulter rechts“ wird als echte PDF-Datei
+                                erzeugt. Dateiname, Metadaten und Inhalt werden vor dem Upload getrennt verschlüsselt.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleSaveEncryptedLabPdf}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Test-PDF verschlüsselt in Storage speichern
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLoadEncryptedLabPdf}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Test-PDF laden + lokal entschlüsseln
+                            </button>
+
+                            {cryptoLabFileCipherInfo && (
+                              <div className="sync-status">
+                                <strong>Was Supabase von der Datei sieht</strong>
+                                <span>
+                                  Pfad: {cryptoLabFileCipherInfo.storagePath}
+                                </span>
+                                <span>
+                                  Verschlüsseltes Storage-Paket: {cryptoLabFileCipherInfo.encryptedSize} Bytes ·
+                                  {' '}Metadaten-Chiffretext: {cryptoLabFileCipherInfo.metadataChars} Zeichen
+                                </span>
+                              </div>
+                            )}
+
+                            {cryptoLabFileResult && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Auf deinem Gerät wiederhergestellt</strong>
+                                <span>
+                                  {cryptoLabFileResult.fileName} ·
+                                  {' '}{cryptoLabFileResult.mimeType} ·
+                                  {' '}{cryptoLabFileResult.originalSize} Bytes
+                                </span>
+                                <span>SHA-256-Prüfung: bestanden</span>
+                                {cryptoLabFileUrl && (
+                                  <a
+                                    className="btn btn-ghost"
+                                    href={cryptoLabFileUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    Entschlüsseltes Test-PDF öffnen
+                                  </a>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="sync-status">
+                              <strong>🪨 Unter dem Browserboden: verschlüsseltes IndexedDB</strong>
+                              <span>
+                                Erst einmal online die verschlüsselte Mini-Praxis in eine separate Offline-Arbeitskopie übernehmen.
+                                Danach darfst du für den eigentlichen Test sogar WLAN/Mobilfunk ausschalten.
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleSeedEncryptedOfflineCache}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Verschlüsselte Offline-Kopie anlegen
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleLoadEncryptedOfflineCache}
+                              disabled={cryptoBusy}
+                            >
+                              Offline-Kopie laden + lokal entschlüsseln
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={handleQueueEncryptedOfflineEdit}
+                              disabled={cryptoBusy}
+                            >
+                              Offline-Doku ändern + verschlüsselt in Outbox
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-green"
+                              onClick={handleSyncEncryptedOfflineOutbox}
+                              disabled={cryptoBusy || !cloudUser}
+                            >
+                              Verschlüsselte Outbox nach Supabase senden
+                            </button>
+
+                            {cryptoOfflineAudit && (
+                              <div className={`sync-status ${cryptoOfflineAudit.safe ? 'sync-status-active' : 'sync-status-error'}`}>
+                                <strong>Rohdatenprüfung IndexedDB</strong>
+                                <span>
+                                  Cache: {cryptoOfflineAudit.cacheCount} Datensätze ·
+                                  {' '}Outbox: {cryptoOfflineAudit.outboxCount} ·
+                                  {' '}Rohdaten: {cryptoOfflineAudit.rawChars} Zeichen
+                                </span>
+                                <span>
+                                  Klartextfundstellen: {cryptoOfflineAudit.leaks.length}
+                                  {cryptoOfflineAudit.safe ? ' – sauber' : ` – ${cryptoOfflineAudit.leaks.join(', ')}`}
+                                </span>
+                              </div>
+                            )}
+
+                            {cryptoOfflinePractice && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Nur im Arbeitsspeicher wieder lesbar</strong>
+                                <span>
+                                  {cryptoOfflinePractice.patient.firstName} {cryptoOfflinePractice.patient.lastName} ·
+                                  {' '}{formatDate(cryptoOfflinePractice.patient.birthDate)}
+                                </span>
+                                <span>
+                                  {formatDate(cryptoOfflinePractice.prescription.issueDate)} ·
+                                  {' '}{cryptoOfflinePractice.prescription.remedy}
+                                </span>
+                                <span>
+                                  {formatDate(cryptoOfflinePractice.docEntry.entryDate)} ·
+                                  {' '}{cryptoOfflinePractice.docEntry.text}
+                                </span>
+                              </div>
+                            )}
+
+                            {cryptoCipherPreview && (
+                              <div className="sync-status">
+                                <strong>So sieht nur der Chiffretext aus</strong>
+                                <span style={{ overflowWrap: 'anywhere' }}>{cryptoCipherPreview}</span>
+                              </div>
+                            )}
+
+                            {cryptoDecryptedText && (
+                              <div className="sync-status sync-status-active">
+                                <strong>Wieder entschlüsselt</strong>
+                                <span>{cryptoDecryptedText}</span>
+                              </div>
+                            )}
+
+                            <button type="button" className="btn btn-ghost" onClick={handleLockCryptoLab}>
+                              Test-Praxisschlüssel sperren
+                            </button>
+                          </>
+                        )}
+
+                        {cryptoRecoveryCode && (
+                          <div className="sync-status">
+                            <strong>Wiederherstellungsschlüssel – nur für diesen Test</strong>
+                            <span style={{ overflowWrap: 'anywhere' }}>{cryptoRecoveryCode}</span>
+                            <span>
+                              Er wird nur direkt nach dem Erzeugen angezeigt. Für den späteren echten Schlüssel
+                              bauen wir dafür einen sicheren Datei-/Druck-Export.
+                            </span>
+                          </div>
+                        )}
+
+                        <button type="button" className="btn btn-ghost" onClick={handleResetCryptoLab}>
+                          Verschlüsselungstest zurücksetzen
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isOwner && (
+                  <div className="backup-card">
+                    <h3>🔐 Vollständiges verschlüsseltes {v3PrimaryMode ? 'V3-' : 'Supabase-'}Backup</h3>
+                    <p>
+                      {v3PrimaryMode
+                        ? 'Sichert den aktuellen verschlüsselten V3-Praxisbestand einschließlich Praxisschlüssel-Keyring und aller V3-Dateien. Das ZIP erhält zusätzlich ein eigenes Backup-Passwort.'
+                        : 'Liest den aktuellen Praxisbestand direkt aus Supabase einschließlich Bilder, Befunde und Bibliotheksdateien. Alles wird erst hier im Browser mit einem eigenen Backup-Passwort verschlüsselt und anschließend als ZIP gespeichert.'}
+                    </p>
+
+                    <div className="stack-sm">
+                      <input
+                        className="field"
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="Backup-Passwort (mindestens 16 Zeichen)"
+                        value={cloudBackupPassphrase}
+                        onChange={event => setCloudBackupPassphrase(event.target.value)}
+                      />
+                      <input
+                        className="field"
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="Backup-Passwort wiederholen"
+                        value={cloudBackupPassphraseConfirm}
+                        onChange={event => setCloudBackupPassphraseConfirm(event.target.value)}
+                      />
+
+                      <button
+                        type="button"
+                        className="btn btn-green"
+                        onClick={handleCreateEncryptedCloudBackup}
+                        disabled={cloudBackupBusy || !cloudUser}
+                      >
+                        {cloudBackupBusy
+                          ? 'Backup läuft …'
+                          : v3PrimaryMode
+                            ? 'Verschlüsseltes V3-Vollbackup erstellen'
+                            : 'Verschlüsseltes Supabase-Vollbackup erstellen'}
+                      </button>
+
+                      <p className="muted">
+                        Das Backup-Passwort wird nicht gespeichert und nicht an Supabase übertragen.
+                        Bitte nicht hier im Chat mitteilen. Ohne dieses Passwort ist die ZIP später nicht lesbar.
+                      </p>
+
+                      {cloudBackupProgress && (
+                        <div className="sync-status">
+                          <strong>Status</strong>
+                          <span>{cloudBackupProgress}</span>
+                        </div>
+                      )}
+
+                      {cloudBackupSummary && (
+                        <div className="sync-status sync-status-active">
+                          <strong>Backup erstellt</strong>
+                          <span>
+                            Patienten: {cloudBackupSummary.counts.patients} ·
+                            {' '}Verordnungen: {cloudBackupSummary.counts.prescriptions} ·
+                            {' '}Doku: {cloudBackupSummary.counts.docEntries}
+                          </span>
+                          <span>
+                            Doku-Bilder: {cloudBackupSummary.counts.docEntryImages} ·
+                            {' '}Befunde: {cloudBackupSummary.counts.patientDocuments} ·
+                            {' '}Bibliothek: {cloudBackupSummary.counts.libraryItems}
+                          </span>
+                          <span>
+                            Dateieinträge: {cloudBackupSummary.fileCount} ·
+                            {' '}Dateidaten: {formatByteCount(cloudBackupSummary.totalPlainFileBytes)} ·
+                            {' '}ZIP: {formatByteCount(cloudBackupSummary.zipBytes)}
+                          </span>
+                          {cloudBackupSummary.missingDeletedFiles > 0 && (
+                            <span>
+                              Hinweis: {cloudBackupSummary.missingDeletedFiles} bereits gelöschte Dateireferenz(en)
+                              hatten erwartungsgemäß keine Datei mehr im Storage.
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => encryptedCloudBackupInputRef.current?.click()}
+                        disabled={cloudBackupBusy}
+                      >
+                        Heruntergeladene ZIP vollständig prüfen
+                      </button>
+
+                      <input
+                        ref={encryptedCloudBackupInputRef}
+                        type="file"
+                        accept=".zip,application/zip"
+                        className="hidden"
+                        onChange={handleVerifyEncryptedCloudBackup}
+                      />
+
+                      {cloudBackupVerification && (
+                        <div className="sync-status sync-status-active">
+                          <strong>✅ Wiederherstellungstest bestanden</strong>
+                          <span>{cloudBackupVerificationFile}</span>
+                          <span>
+                            Patienten: {cloudBackupVerification.counts.patients} ·
+                            {' '}Verordnungen: {cloudBackupVerification.counts.prescriptions} ·
+                            {' '}Doku: {cloudBackupVerification.counts.docEntries}
+                          </span>
+                          <span>
+                            Dateien geprüft: {cloudBackupVerification.verifiedFiles} ·
+                            {' '}geprüfte Dateidaten: {formatByteCount(cloudBackupVerification.verifiedBytes)}
+                          </span>
+                          <span>
+                            Dabei wurden keinerlei Tabellen oder Dateien in Supabase verändert.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {isOwner && !v3PrimaryMode && (
+                  <div className="backup-card">
+                    <h3>Einmalige Migration: altes ZIP → Supabase</h3>
+                    <p>
+                      Prüft ein vorhandenes vollständiges ZIP-Backup und übernimmt danach Patienten, Verordnungen,
+                      Doku, Bilder, Befunde und Bibliothek in die neue Supabase-Struktur.
+                    </p>
+
+                    <div className="stack-sm">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => migrationInputRef.current?.click()}
+                        disabled={migrationBusy}
+                      >
+                        Altes Voll-ZIP auswählen und prüfen
+                      </button>
+
+                      <input
+                        ref={migrationInputRef}
+                        type="file"
+                        accept=".json,.zip,application/json,application/zip"
+                        className="hidden"
+                        onChange={handleSelectMigrationZip}
+                      />
+
+                      {migrationPreview && (
+                        <div className="sync-status">
+                          <strong>{migrationPreview.valid ? 'ZIP-Prüfung bestanden' : 'ZIP-Prüfung nicht bestanden'}</strong>
+                          <span>{migrationPreview.fileName}</span>
+                          <span>
+                            Patienten: {migrationPreview.counts?.patients || 0} ·
+                            {' '}Verordnungen: {migrationPreview.counts?.prescriptions || 0} ·
+                            {' '}Doku: {migrationPreview.counts?.documentationEntries || 0}
+                          </span>
+                          <span>
+                            Bilder: {migrationPreview.counts?.images || 0} ·
+                            {' '}Befunde: {migrationPreview.counts?.patientDocuments || 0} ·
+                            {' '}Bibliothek: {migrationPreview.counts?.libraryItems || 0}
+                          </span>
+
+                          {migrationPreview.blockingIssues?.map((issue, index) => (
+                            <span key={index}>⚠️ {issue}</span>
+                          ))}
+                        </div>
+                      )}
+
+                      {migrationProgress && (
+                        <p className="muted"><strong>Status:</strong> {migrationProgress}</p>
+                      )}
+
+                      {migrationPreview?.valid && (
+                        <button
+                          type="button"
+                          className="btn btn-green"
+                          onClick={handleRunMigration}
+                          disabled={migrationBusy}
+                        >
+                          {migrationBusy ? 'Migration läuft …' : 'Migration nach Supabase starten'}
+                        </button>
+                      )}
+                    </div>
+
+                    <p className="muted">
+                      Für den Test bitte nur ein Backup mit Fantasie-/Testdaten verwenden. Das echte Praxis-Backup bleibt
+                      bis zur Sicherheits-Endrunde unangetastet.
+                    </p>
+                  </div>
+                )}
+
+                <div className="backup-card">
+                  <h3>Komplettes ZIP-Backup</h3>
                   <p>
-                    Sichert den aktuellen verschlüsselten Praxisbestand einschließlich V3-Dateien
-                    und verschlüsseltem Praxisschlüssel-Keyring. Das ZIP wird zusätzlich mit einem
-                    eigenen Backup-Passwort geschützt.
+                    Exportiert alle lokalen Daten vollständig: Patienten, Verordnungen, Doku, Bilder, Dokumente/Befunde und Bibliothek.
                   </p>
 
                   <div className="stack-sm">
-                    <input
-                      className="field"
-                      type="password"
-                      autoComplete="new-password"
-                      placeholder="Backup-Passwort (mindestens 16 Zeichen)"
-                      value={cloudBackupPassphrase}
-                      onChange={event => setCloudBackupPassphrase(event.target.value)}
-                    />
-                    <input
-                      className="field"
-                      type="password"
-                      autoComplete="new-password"
-                      placeholder="Backup-Passwort wiederholen"
-                      value={cloudBackupPassphraseConfirm}
-                      onChange={event => setCloudBackupPassphraseConfirm(event.target.value)}
-                    />
-
-                    <button
-                      type="button"
-                      className="btn btn-green"
-                      onClick={handleCreateEncryptedCloudBackup}
-                      disabled={cloudBackupBusy || !cloudUser}
-                    >
-                      {cloudBackupBusy ? 'Backup läuft …' : 'Verschlüsseltes V3-Vollbackup erstellen'}
+                    <button className="btn btn-secondary" onClick={handleExportBackup} disabled={v3PrimaryMode}>
+                      ZIP-Backup exportieren
                     </button>
 
-                    <p className="muted">
-                      Das Backup-Passwort wird nicht gespeichert und nicht an Supabase übertragen.
-                      Ohne dieses Passwort ist die ZIP später nicht lesbar.
-                    </p>
-
-                    {cloudBackupProgress && (
-                      <div className="sync-status">
-                        <strong>Status</strong>
-                        <span>{cloudBackupProgress}</span>
-                      </div>
-                    )}
-
-                    {cloudBackupSummary && (
-                      <div className="sync-status sync-status-active">
-                        <strong>Backup erstellt</strong>
-                        <span>
-                          Patienten: {cloudBackupSummary.counts.patients} ·
-                          {' '}Verordnungen: {cloudBackupSummary.counts.prescriptions} ·
-                          {' '}Doku: {cloudBackupSummary.counts.docEntries}
-                        </span>
-                        <span>
-                          Doku-Bilder: {cloudBackupSummary.counts.docEntryImages} ·
-                          {' '}Befunde: {cloudBackupSummary.counts.patientDocuments} ·
-                          {' '}Bibliothek: {cloudBackupSummary.counts.libraryItems}
-                        </span>
-                        <span>
-                          Dateien: {cloudBackupSummary.encryptedFiles ?? cloudBackupSummary.fileCount} ·
-                          {' '}Dateidaten: {formatByteCount(cloudBackupSummary.totalPlainFileBytes)} ·
-                          {' '}ZIP: {formatByteCount(cloudBackupSummary.zipBytes)}
-                        </span>
-                      </div>
-                    )}
-
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => encryptedCloudBackupInputRef.current?.click()}
-                      disabled={cloudBackupBusy}
-                    >
-                      Heruntergeladene V3-ZIP vollständig prüfen
+                    <button className="btn btn-ghost" onClick={() => importInputRef.current?.click()} disabled={v3PrimaryMode}>
+                      ZIP-Backup importieren
                     </button>
+                    {v3PrimaryMode && (
+                      <p className="muted">Legacy-ZIP ist im V3-Hauptbetrieb deaktiviert. Bitte das verschlüsselte V3-Vollbackup oben verwenden.</p>
+                    )}
 
                     <input
-                      ref={encryptedCloudBackupInputRef}
+                      ref={importInputRef}
                       type="file"
-                      accept=".zip,application/zip"
+                      accept=".json,.zip,application/json,application/zip"
                       className="hidden"
-                      onChange={handleVerifyEncryptedCloudBackup}
+                      onChange={handleImportFile}
                     />
+                  </div>
+                </div>
 
-                    {cloudBackupVerification && (
-                      <div className="sync-status sync-status-active">
-                        <strong>✅ Wiederherstellungstest bestanden</strong>
-                        <span>{cloudBackupVerificationFile}</span>
-                        <span>
-                          Patienten: {cloudBackupVerification.counts.patients} ·
-                          {' '}Verordnungen: {cloudBackupVerification.counts.prescriptions} ·
-                          {' '}Doku: {cloudBackupVerification.counts.docEntries}
-                        </span>
-                        <span>
-                          Dateien geprüft: {cloudBackupVerification.verifiedFiles} ·
-                          {' '}geprüfte Dateidaten: {formatByteCount(cloudBackupVerification.verifiedBytes)}
-                        </span>
-                        <span>Supabase wurde bei der Prüfung nicht verändert.</span>
-                      </div>
-                    )}
+                <div className="backup-card">
+                  <h3>ZIP-Änderungs-Backup</h3>
+                  <p>
+                    Tablet-freundlicher Änderungs-Export ohne Verschlüsselung. Exportiert nur neue oder geänderte Einträge seit dem letzten Änderungs-Export.
+                  </p>
+
+                  <p className="muted">
+                    Letzte Änderung: <strong>{formatDateTime(lastModifiedAt)}</strong>
+                  </p>
+
+                  <p className="muted">
+                    Letzter Änderungs-Export: <strong>{formatDateTime(lastEncryptedExportAt)}</strong>
+                  </p>
+
+                  <div className="stack-sm">
+                    <button className="btn btn-secondary" onClick={handleExportChangeZip} disabled={v3PrimaryMode}>
+                      ZIP-Änderungen exportieren
+                    </button>
+
+                    <button className="btn btn-ghost" onClick={() => changeZipImportRef.current?.click()} disabled={v3PrimaryMode}>
+                      ZIP-Änderungen importieren
+                    </button>
+
+                    <input
+                      ref={changeZipImportRef}
+                      type="file"
+                      accept=".json,.zip,application/json,application/zip"
+                      className="hidden"
+                      onChange={handleImportChangeZip}
+                    />
                   </div>
                 </div>
 
@@ -6410,28 +7335,6 @@ function openStoredFile(file) {
     }))
   }
 />
-
-                  <button type="button" className="btn btn-primary" onClick={openBefundDrawing}>
-                    {patientDocumentForm.file?.fileName === 'Zeichenbefund.png' ? 'Zeichnung bearbeiten' : 'Befund zeichnen'}
-                  </button>
-                  {patientDocumentBase && patientDocumentForm.file?.fileName === 'Zeichenbefund.png' && (
-                    <button type="button" className="btn btn-ghost" onClick={() => {
-                      setPatientDocumentForm(prev => ({ ...prev, id: '', documentDate: todayIso(), file: { ...prev.file, storagePath: '', cryptoMeta: null } }))
-                      setPatientDocumentBase(null)
-                      setPatientDocumentConflict(null)
-                      setSuccessMessage('Kopie vorbereitet. Der bisherige Befund bleibt erhalten. Bitte bearbeiten und als neuen Befund speichern.')
-                    }}>Als neuen Befund übernehmen</button>
-                  )}
-                  {befundDrawingOpen && (
-                    <BefundDrawing
-                      file={patientDocumentForm.file}
-                      onClose={() => setBefundDrawingOpen(false)}
-                      onApply={file => {
-                        setPatientDocumentForm(prev => ({ ...prev, title: prev.title || 'Haltungsbefund', file }))
-                        setBefundDrawingOpen(false)
-                      }}
-                    />
-                  )}
 
                   <label className="upload-card">
                     <span>

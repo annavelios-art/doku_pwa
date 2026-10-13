@@ -1,0 +1,13 @@
+24-Stunden-Freigabe – 13.10.2026
+
+Geänderte Dateien für GitHub:
+- src/App.jsx ersetzen
+- src/lib/practiceKeySession.js neu hinzufügen
+
+Auf dem Entsperrbildschirm das Häkchen „Auf diesem Gerät 24 Stunden entsperrt bleiben“ setzen und wie gewohnt das Verschlüsselungspasswort eingeben. Die Freigabe läuft 24 Stunden ab dieser Eingabe, ohne Verlängerung durch Benutzung. Sie gilt nur für dieses Gerät und dieses Browserprofil.
+
+Das Passwort wird nicht gespeichert. Der nicht exportierbare Praxisschlüssel wird lokal in IndexedDB gespeichert. Wer das entsperrte Gerät benutzt, kann während dieser Freigabe die Dokumentation öffnen. Die Zeitgrenze wird von der PWA kontrolliert; sie ist keine hardwaregestützte Sperre gegen jemanden, der Browserdaten oder Programmcode gezielt manipuliert.
+
+„Praxis sperren“ in der Navigation oder Abmelden entfernt die Freigabe. Ohne Häkchen bleibt das bisherige Verhalten erhalten. Die Datenverschlüsselung und Schlüsselhüllen in der Cloud werden nicht geändert.
+
+Prüfung: Produktionsbuild erfolgreich. Automatisierter Test für Schlüsselwiederherstellung, Verschlüsselung/Entschlüsselung mit dem gespeicherten Schlüssel, Ablauf nach 24 Stunden, Kontowechsel, geänderte Schlüsselhüllen und Entfernen der Freigabe bestanden. IndexedDB im Test simuliert; bitte den Neustart auch am eigenen Tablet ausprobieren. Bestehende Lint-Fehler im Ausgangsprojekt verhindern einen vollständig grünen Lint-Lauf; keine zusätzlichen Lint-Fehler durch diese Änderung.
