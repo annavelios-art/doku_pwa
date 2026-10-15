@@ -135,18 +135,6 @@ export default function DocumentationEditor({
           </div>
         </div>
 
-        <div className="stack-sm">
-          <button
-            type="button"
-            className={`btn ${isDictating ? 'btn-danger' : 'btn-secondary'}`}
-            onClick={toggleDictation}
-          >
-            🎤 {isDictating ? 'Diktat stoppen' : 'Diktieren testen'}
-          </button>
-
-          {dictationStatus && <p className="muted">{dictationStatus}</p>}
-        </div>
-
         <textarea
           ref={docTextareaRef}
           className="field textfield"

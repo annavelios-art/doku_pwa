@@ -658,6 +658,7 @@ export default function App() {
   const [cloudBackupBusy, setCloudBackupBusy] = useState(false)
   const [cloudBackupProgress, setCloudBackupProgress] = useState('')
   const [cloudBackupSummary, setCloudBackupSummary] = useState(null)
+  const [lastV3BackupCreatedAt, setLastV3BackupCreatedAt] = useState(() => window.localStorage.getItem('pwaLastV3BackupCreatedAt') || '')
   const [cloudBackupVerification, setCloudBackupVerification] = useState(null)
   const [cloudBackupVerificationFile, setCloudBackupVerificationFile] = useState('')
   const [rememberPractice, setRememberPractice] = useState(false)
@@ -3914,6 +3915,11 @@ async function handleImportChangeZip(event) {
       window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 
       setCloudBackupSummary(result.summary)
+      if (v3PrimaryModeRef.current) {
+        const timestamp = new Date().toISOString()
+        window.localStorage.setItem('pwaLastV3BackupCreatedAt', timestamp)
+        setLastV3BackupCreatedAt(timestamp)
+      }
       setCloudBackupPassphraseConfirm('')
       setSuccessMessage(
         'Verschlüsseltes Supabase-Vollbackup erstellt. Bitte die heruntergeladene ZIP jetzt direkt mit dem Wiederherstellungstest prüfen.',
@@ -5552,8 +5558,6 @@ function openStoredFile(file) {
               ['exercises', 'Übungen', Dumbbell],
               ['library', 'Bibliothek', Library],
               ['backup', 'Backup', CloudUpload],
-              ['settings', 'Einstellungen', Settings],
-	      ['speech', 'Sprachmodell', FileText],
             ].map(([key, label, Icon]) => (
               <button
                 key={key}
@@ -5651,13 +5655,24 @@ function openStoredFile(file) {
               </div>
             )}
 
-            {nav === 'exercises' && <section className="surface-card stack-lg">
-              <h2 className="section-title">Übungen</h2>
-              <p className="muted">Dieser Bereich wird später erweitert.</p>
-              <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
-            </section>}
+            {nav === 'exercises' && (
+              <section className="surface-card stack-lg">
+                <h2 className="section-title">Übungen für zu Hause</h2>
+                <p className="muted">Hier geht es direkt zur Übungs-PWA von Physiooptima. Patientinnen und Patienten scannen den QR-Code und geben dort ihren persönlichen Zugangscode ein.</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: '24px', padding: '18px' }}>
+                  <img src="/uebungen-qr.png" alt="QR-Code zur Übungs-PWA" width="240" height="240" style={{ maxWidth: '100%', background: '#fff', padding: '12px', borderRadius: '12px', border: '1px solid #d2dbe4' }} />
+                  <div className="stack-sm" style={{ maxWidth: '360px' }}>
+                    <h3 className="section-subtitle">QR-Code scannen → Übungen ansehen</h3>
+                    <p>Alternativ die Übungs-PWA direkt öffnen:</p>
+                    <a className="btn btn-primary" href="https://ubungen-physio.anna-velios.workers.dev" target="_blank" rel="noopener noreferrer">Übungs-PWA öffnen ↗</a>
+                    <p className="muted" style={{ overflowWrap: 'anywhere' }}>ubungen-physio.anna-velios.workers.dev</p>
+                  </div>
+                </div>
+                <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
+              </section>
+            )}
 
-	  {nav === 'speech' && view === 'speechModel' && (
+	  {false && nav === 'speech' && view === 'speechModel' && (
   	  <section className="surface-card stack-lg">
     	<h2 className="section-title">Sprachmodell</h2>
     	<p className="muted">
@@ -5678,7 +5693,7 @@ function openStoredFile(file) {
   </section>
 )}
 
-            {nav === 'settings' && <section className="surface-card stack-lg">
+            {false && nav === 'settings' && <section className="surface-card stack-lg">
               <h2 className="section-title">Einstellungen</h2>
 
               <div className="stack">
@@ -5741,9 +5756,22 @@ function openStoredFile(file) {
               <section className="surface-card stack-lg">
                 <h2 className="section-title">Backup</h2>
                 <p className="muted">
-                  Hier liegt das vollständige Rettungsboot: ZIP-Backup exportieren oder komplett wieder einspielen.
+                  Verschlüsseltes Praxis-Backup erstellen und seine Lesbarkeit prüfen.
                 </p>
 
+                {v3PrimaryMode && (
+                  <div className="backup-card">
+                    <h3>🔐 V3-Praxissicherung</h3>
+                    <p className="muted">Das Backup enthält den verschlüsselten Praxisbestand. Zum Erstellen brauchst du ein eigenes Backup-Passwort (mindestens 16 Zeichen).</p>
+                    <p className="muted">Letztes hier erstelltes V3-Backup: <strong>{lastV3BackupCreatedAt ? formatDateTime(lastV3BackupCreatedAt) : 'Noch keines auf diesem Gerät erfasst'}</strong></p>
+                    <p className="muted">Praxisschlüssel: <strong>{v3Unlocked ? '🔓 Entsperrt' : '🔒 Gesperrt'}</strong></p>
+                    <p className="muted">Die Eingabefelder und die Schaltflächen für das Backup stehen direkt darunter. „Backup prüfen“ testet die ZIP, stellt aber keine Daten wieder her.</p>
+                  </div>
+                )}
+
+                <details className="backup-card">
+                  <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Erweiterte Verwaltung: Praxisschlüssel und ältere Cloud-Synchronisierung</summary>
+                  <p className="muted">Nur bei Bedarf öffnen. Die aktuelle V3-Dokumentation und Synchronisierung werden dadurch nicht verändert.</p>
                 <div className="backup-card">
                   <h3>Verschlüsselter Cloud-Tresor</h3>
                   {!cloudUser ? (
@@ -6037,7 +6065,9 @@ function openStoredFile(file) {
                   </div>
                 )}
 
-                {isOwner && (
+                </details>
+
+                {false && isOwner && (
                   <div className="backup-card">
                     <h3>🔐 V2-Verschlüsselungslabor</h3>
                     <p>
@@ -6420,7 +6450,7 @@ function openStoredFile(file) {
 
                 {isOwner && (
                   <div className="backup-card">
-                    <h3>🔐 Vollständiges verschlüsseltes {v3PrimaryMode ? 'V3-' : 'Supabase-'}Backup</h3>
+                    <h3>🔐 {v3PrimaryMode ? 'V3-Vollbackup erstellen und prüfen' : 'Vollständiges verschlüsseltes Supabase-Backup'}</h3>
                     <p>
                       {v3PrimaryMode
                         ? 'Sichert den aktuellen verschlüsselten V3-Praxisbestand einschließlich Praxisschlüssel-Keyring und aller V3-Dateien. Das ZIP erhält zusätzlich ein eigenes Backup-Passwort.'
@@ -6503,7 +6533,7 @@ function openStoredFile(file) {
                         onClick={() => encryptedCloudBackupInputRef.current?.click()}
                         disabled={cloudBackupBusy}
                       >
-                        Heruntergeladene ZIP vollständig prüfen
+                        Backup prüfen (keine Wiederherstellung)
                       </button>
 
                       <input
@@ -6606,6 +6636,9 @@ function openStoredFile(file) {
                   </div>
                 )}
 
+                {/* Alte unverschlüsselte ZIP-Backup-Karten im V3-Hauptbetrieb nicht anzeigen. */}
+                {!v3PrimaryMode && (
+                  <>
                 <div className="backup-card">
                   <h3>Komplettes ZIP-Backup</h3>
                   <p>
@@ -6666,6 +6699,9 @@ function openStoredFile(file) {
                     />
                   </div>
                 </div>
+
+                  </>
+                )}
 
                 <div><button className="btn btn-ghost" onClick={goPatients}>Zurück zur Patientenliste</button></div>
               </section>
